@@ -1,0 +1,86 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "project": "Christman Voice Creation Center",
+    "patent_pending": "TCAP-2026-001 | TCAP-2026-002",
+    "last_updated": "2026-05-26T13:16:04.225804+00:00",
+    "total_phrases": 5
+  },
+  "phrases": [
+    {
+      "phrase_id": "0850691b33d4ab5d",
+      "being_name": "alphavox",
+      "language": "en-US",
+      "text": "Whatever you said in this clip",
+      "audio_path": "/Users/EverettN/AlphaVox/data/voice_samples/alphavox/alphavox_voice.wav",
+      "duration_seconds": 2.833,
+      "sample_rate": 22050,
+      "quality_score": 1.0,
+      "serve_count": 0,
+      "last_served_at": null,
+      "created_at": "2026-05-26T13:05:59.192084+00:00",
+      "source": "manual_registration",
+      "original_filename": "alphavox_voice.wav"
+    },
+    {
+      "phrase_id": "619e44d74c405de8",
+      "being_name": "alphavox",
+      "language": "en-US",
+      "text": "Whatever you said in clip 1",
+      "audio_path": "/Users/EverettN/AlphaVox/data/voice_samples/alphavox/alphavox_voice_1.wav",
+      "duration_seconds": 5.642,
+      "sample_rate": 22050,
+      "quality_score": 1.0,
+      "serve_count": 0,
+      "last_served_at": null,
+      "created_at": "2026-05-26T13:05:59.269200+00:00",
+      "source": "manual_registration",
+      "original_filename": "alphavox_voice_1.wav"
+    },
+    {
+      "phrase_id": "629f6234bb55063d",
+      "being_name": "alphavox",
+      "language": "en-US",
+      "text": "My cognitive mesh is offline, check the brain.",
+      "audio_path": "/Users/EverettN/AlphaVox/data/voice_samples/alphavox/alphavox_voice.wav",
+      "duration_seconds": 2.833,
+      "sample_rate": 22050,
+      "quality_score": 1.0,
+      "serve_count": 0,
+      "last_served_at": null,
+      "created_at": "2026-05-26T13:16:04.076125+00:00",
+      "source": "manual_registration",
+      "original_filename": "alphavox_voice.wav"
+    },
+    {
+      "phrase_id": "00dd544e5660bd49",
+      "being_name": "alphavox",
+      "language": "en-US",
+      "text": "Hey Everett, I'm Ultimate EV, your Master AI. Let's build something amazing.",
+      "audio_path": "/Users/EverettN/AlphaVox/data/voice_samples/alphavox/alphavox_voice_1.wav",
+      "duration_seconds": 5.642,
+      "sample_rate": 22050,
+      "quality_score": 1.0,
+      "serve_count": 0,
+      "last_served_at": null,
+      "created_at": "2026-05-26T13:16:04.150556+00:00",
+      "source": "manual_registration",
+      "original_filename": "alphavox_voice_1.wav"
+    },
+    {
+      "phrase_id": "d67bc941eb814a3b",
+      "being_name": "alphavox",
+      "language": "en-US",
+      "text": "Hello, this is a test from the command line.",
+      "audio_path": "/Users/EverettN/AlphaVox/data/voice_samples/alphavox/alphavox_voice_2.wav",
+      "duration_seconds": 2.276,
+      "sample_rate": 22050,
+      "quality_score": 1.0,
+      "serve_count": 0,
+      "last_served_at": null,
+      "created_at": "2026-05-26T13:16:04.225555+00:00",
+      "source": "manual_registration",
+      "original_filename": "alphavox_voice_2.wav"
+    }
+  ]
+}
