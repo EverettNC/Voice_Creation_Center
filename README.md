@@ -168,6 +168,12 @@ report = registry.run_health_cycle()
 print(report)
 ```
 
+**Live Studio (Phase 1) — record, approve, export to AlphaVox:**
+The Voice Creation Center is the recording/approval station. Raw takes stay
+here; approved takes export to the AlphaVox phrase pack
+(`/Users/EverettN/packs/phrases/alphavox_cycled`). See
+[STUDIO_PHASE1.md](STUDIO_PHASE1.md) for the full workflow.
+
 ---
 
 ## Voice Dimensions
