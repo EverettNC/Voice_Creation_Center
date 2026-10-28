@@ -17,6 +17,9 @@ llvmlite<0.44 ; platform_system == "Darwin" and platform_machine == "x86_64"
 # was built against NumPy 1.x). Used by the studio recorder and validation.
 numpy>=1.26,<2
 
+# The voice engine's frequency floor and cap (a Butterworth band filter).
+scipy>=1.11
+
 # The ingestor splits and converts audio with pydub. Any input that is not
 # already .wav also needs the ffmpeg program on the PATH.
 pydub>=0.25.1
