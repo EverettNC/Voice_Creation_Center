@@ -33,14 +33,11 @@ CARDINAL RULE 13: No stubs. Pre-rendered audio is real audio.
 ================================================================================
 """
 
-import contextlib
-import fcntl
 import hashlib
 import json
 import logging
 import os
 import time
-import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -51,38 +48,10 @@ from typing import Optional
 logger = logging.getLogger("christman.voice_express")
 
 # Internal paths — all express assets live inside the center
-# (2026-10-28) $CHRISTMAN_EXPRESS_ROOT, when set, names the express folder in
-# place of the default below; VoiceExpress(root=...) does the same for one
-# instance. With neither, the location is exactly what it was before.
-EXPRESS_ROOT    = Path(
-    os.environ.get("CHRISTMAN_EXPRESS_ROOT") or (Path(__file__).parent.parent / "express")
-).expanduser()
+EXPRESS_ROOT    = Path(__file__).parent.parent / "express"
 PHRASE_CACHE    = EXPRESS_ROOT / "phrase_cache"
 PRIORITY_QUEUE  = EXPRESS_ROOT / "priority_queue"
 EXPRESS_INDEX   = EXPRESS_ROOT / "express_index.json"
-
-# Where an express phrase's audio came from (ExpressPhrase.source).
-# Everything except RENDERED_SOURCE is a recording someone made; the factory
-# (vcc_factory.py) never replaces one of those with a rendered file.
-RENDERED_SOURCE  = "vcc_factory"      # rendered by vcc_factory.py
-RECORDING_SOURCE = "recording"        # a being's own recorded take, registered in place
-
-class RecordingInPlace(RuntimeError):
-    """(Added 2026-10-28) register_phrase(replace_recording=False) found a recording there."""
-
-
-# Priority order for the on-disk queue: lower runs first.
-_PRIORITY_RANK = {"critical": 0, "high": 1, "standard": 2, "preload": 3}
-
-
-def _write_json_atomic(path: Path, data: dict) -> None:
-    """Write JSON so a reader in another process never sees half a file."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
 
 # Performance targets
 EXPRESS_TARGET_MS  = 50    # Pre-rendered: serve in under 50ms
@@ -115,24 +84,6 @@ class ExpressPhrase:
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
-    # Added 2026-10-28. voice_path_registrar.py and voice_ingestor.py have
-    # always written "source" and "original_filename" into the index; without
-    # these two fields load() could not read an index they had touched.
-    # source: RECORDING_SOURCE, "path_registrar", "manual_registration",
-    #   "voice_ingestor" (all recordings), RENDERED_SOURCE (the factory), or
-    #   None for an entry written before the field existed.
-    source: Optional[str] = None
-    original_filename: Optional[str] = None
-    # For rendered audio only: the synthesizer, the measured voice it spoke
-    # in, and the checks the file passed before it was registered.
-    engine: Optional[str] = None
-    voice: Optional[str] = None
-    validation: Optional[dict] = None
-
-    @property
-    def is_rendered(self) -> bool:
-        """True only for audio the factory rendered. Anything else is a recording."""
-        return self.source == RENDERED_SOURCE
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -161,35 +112,6 @@ class PriorityRequest:
         submitted = datetime.fromisoformat(self.submitted_at)
         now = datetime.now(timezone.utc)
         return (now - submitted).total_seconds() * 1000
-
-    # Added 2026-10-28: the queue lives on disk, one file per request.
-    def to_dict(self) -> dict:
-        """The request as stored on disk. audio_data is not stored."""
-        return {
-            "request_id": self.request_id,
-            "being_name": self.being_name,
-            "pack_id": self.pack_id,
-            "text": self.text,
-            "language": self.language,
-            "priority": self.priority.value,
-            "submitted_at": self.submitted_at,
-            "completed_at": self.completed_at,
-            "error": self.error,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "PriorityRequest":
-        return cls(
-            request_id=data["request_id"],
-            being_name=data["being_name"],
-            pack_id=data["pack_id"],
-            text=data["text"],
-            language=data["language"],
-            priority=Priority(data["priority"]),
-            submitted_at=data["submitted_at"],
-            completed_at=data.get("completed_at"),
-            error=data.get("error"),
-        )
 
 
 @dataclass
@@ -238,56 +160,40 @@ class VoiceExpress:
         )
     """
 
-    def __init__(self, root: Optional[Path] = None):
-        """
-        root  (added 2026-10-28) the express folder for this instance. The
-              default is EXPRESS_ROOT, so existing callers are unchanged.
-              The factory and AlphaVox must name the same folder.
-        """
-        self.root = Path(root).expanduser() if root is not None else EXPRESS_ROOT
-        self.phrase_cache = self.root / "phrase_cache"
-        self.priority_queue_dir = self.root / "priority_queue"
-        self.index_path = self.root / "express_index.json"
-
+    def __init__(self):
         self._phrases: dict[str, ExpressPhrase] = {}
         self._priority_queue: list[PriorityRequest] = []
-        # Requests handed out by get_next_priority_request() and not yet
-        # completed. Their files stay on disk until complete_priority_request().
-        self._in_flight: dict[str, PriorityRequest] = {}
-        self._index_mtime_ns: Optional[int] = None
         self._stats = defaultdict(int)
         self._loaded = False
 
         # Ensure internal directories exist
-        self.phrase_cache.mkdir(parents=True, exist_ok=True)
-        self.priority_queue_dir.mkdir(parents=True, exist_ok=True)
+        PHRASE_CACHE.mkdir(parents=True, exist_ok=True)
+        PRIORITY_QUEUE.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------------------------------------
     # Load & Save
     # -------------------------------------------------------------------
 
     def load(self) -> bool:
-        """Load the express index and the waiting priority requests from disk."""
-        if not self.index_path.exists():
+        """Load the express index from disk."""
+        if not EXPRESS_INDEX.exists():
             logger.info("No express index found — starting fresh.")
             self._loaded = True
-            with self._index_lock():
-                # Another process may have made it while this one waited.
-                if self.index_path.exists():
-                    self._phrases = self._read_index()
-                else:
-                    self._save()
-            self._load_priority_queue()
+            self._save()
             return True
 
         try:
-            self._phrases = self._read_index()
+            with open(EXPRESS_INDEX, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            for phrase_data in data.get("phrases", []):
+                phrase = ExpressPhrase(**phrase_data)
+                self._phrases[phrase.phrase_id] = phrase
+
             self._loaded = True
-            self._load_priority_queue()
             logger.info(
                 f"Express service loaded — "
-                f"{len(self._phrases)} pre-rendered phrases ready, "
-                f"{len(self._priority_queue)} priority requests waiting."
+                f"{len(self._phrases)} pre-rendered phrases ready."
             )
             return True
 
@@ -295,52 +201,8 @@ class VoiceExpress:
             logger.error(f"Express load failed: {e}", exc_info=True)
             return False
 
-    def _read_index(self) -> dict:
-        """Read the index file. Raises on a file that cannot be read."""
-        st = self.index_path.stat()
-        with open(self.index_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        phrases = {}
-        for phrase_data in data.get("phrases", []):
-            phrase = ExpressPhrase(**phrase_data)
-            phrases[phrase.phrase_id] = phrase
-        self._index_mtime_ns = st.st_mtime_ns
-        return phrases
-
-    @contextlib.contextmanager
-    def _index_lock(self):
-        """
-        (Added 2026-10-28) Hold express_index.lock while changing the index.
-        The factory and AlphaVox are two processes on one index; each change
-        re-reads the file under this lock first, so neither writes over the
-        other's phrase.
-        """
-        with open(self.root / "express_index.lock", "a+") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-
-    def refresh_index(self) -> bool:
-        """
-        (Added 2026-10-28) Re-read the index if another process has written it
-        since this instance last read or wrote it. Returns True if it re-read.
-        The factory calls this before every registration, so it never writes
-        over a phrase the ingestor, the registrar or another process added.
-        """
-        self._require_loaded()
-        try:
-            mtime = self.index_path.stat().st_mtime_ns
-        except FileNotFoundError:
-            return False
-        if mtime == self._index_mtime_ns:
-            return False
-        self._phrases = self._read_index()
-        return True
-
     def _save(self) -> None:
-        """Persist the express index (atomically: write a temp file, then rename)."""
+        """Persist the express index."""
         try:
             data = {
                 "meta": {
@@ -352,8 +214,8 @@ class VoiceExpress:
                 },
                 "phrases": [p.to_dict() for p in self._phrases.values()],
             }
-            _write_json_atomic(self.index_path, data)
-            self._index_mtime_ns = self.index_path.stat().st_mtime_ns
+            with open(EXPRESS_INDEX, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"Express save failed: {e}", exc_info=True)
 
@@ -399,15 +261,8 @@ class VoiceExpress:
                 f"Express audio file missing for phrase {phrase_id}. "
                 f"Re-render required."
             )
-            with self._index_lock():
-                if self.index_path.exists():
-                    self._phrases = self._read_index()
-                on_disk = self._phrases.get(phrase_id)
-                # Remove it only if the index still points at the missing file:
-                # the factory may have re-rendered it a moment ago.
-                if on_disk is not None and on_disk.audio_path == phrase.audio_path:
-                    del self._phrases[phrase_id]
-                    self._save()
+            del self._phrases[phrase_id]
+            self._save()
             return ExpressResult(
                 success=False,
                 track="pre_rendered",
@@ -461,13 +316,7 @@ class VoiceExpress:
         audio_path: str,
         duration_seconds: float,
         sample_rate: int = 22050,
-        quality_score: float = 1.0,
-        source: Optional[str] = None,
-        original_filename: Optional[str] = None,
-        engine: Optional[str] = None,
-        voice: Optional[str] = None,
-        validation: Optional[dict] = None,
-        replace_recording: bool = True,
+        quality_score: float = 1.0
     ) -> ExpressPhrase:
         """
         Register a pre-rendered phrase into the express cache.
@@ -475,14 +324,6 @@ class VoiceExpress:
 
         The audio file must already exist at audio_path before calling this.
         Rule 13 — we don't register what doesn't exist.
-
-        source, original_filename, engine, voice, validation (added
-        2026-10-28) say where the audio came from; see ExpressPhrase.
-
-        replace_recording (added 2026-10-28) False refuses, with
-        RecordingInPlace, to replace an entry that is a recording whose file
-        is still there. The factory passes False for every render, so a
-        rendered phrase never takes the place of a being's own recording.
         """
         self._require_loaded()
 
@@ -500,30 +341,11 @@ class VoiceExpress:
             audio_path=audio_path,
             duration_seconds=duration_seconds,
             sample_rate=sample_rate,
-            quality_score=quality_score,
-            source=source,
-            original_filename=original_filename,
-            engine=engine,
-            voice=voice,
-            validation=validation,
+            quality_score=quality_score
         )
 
-        with self._index_lock():
-            if self.index_path.exists():
-                self._phrases = self._read_index()
-            existing = self._phrases.get(phrase_id)
-            if (
-                not replace_recording
-                and existing is not None
-                and not existing.is_rendered
-                and Path(existing.audio_path).exists()
-            ):
-                raise RecordingInPlace(
-                    f"'{text[:40]}' for {being_name} is a recording "
-                    f"({existing.audio_path}); not replaced"
-                )
-            self._phrases[phrase_id] = phrase
-            self._save()
+        self._phrases[phrase_id] = phrase
+        self._save()
 
         logger.info(
             f"Express phrase registered: '{text[:40]}' "
@@ -543,12 +365,6 @@ class VoiceExpress:
         """Quick check — is this phrase already in the express cache?"""
         phrase_id = self._make_phrase_id(text, being_name, language)
         return phrase_id in self._phrases
-
-    def get_phrase(
-        self, text: str, being_name: str, language: str = "en-US"
-    ) -> Optional[ExpressPhrase]:
-        """(Added 2026-10-28) The index entry for this phrase, or None."""
-        return self._phrases.get(self._make_phrase_id(text, being_name, language))
 
     # -------------------------------------------------------------------
     # Track 2 — Priority Synthesis Queue
@@ -574,13 +390,10 @@ class VoiceExpress:
         registers a callback via the voice_engine orchestrator.
         """
         self._require_loaded()
-        priority = Priority(priority)
 
-        # The short random tail (added 2026-10-28) keeps two requests made in
-        # the same millisecond from sharing an id, and so a file on disk.
         request_id = (
             f"express_{being_name.lower()}_{priority.value}"
-            f"_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+            f"_{int(time.time() * 1000)}"
         )
 
         request = PriorityRequest(
@@ -592,20 +405,7 @@ class VoiceExpress:
             priority=priority
         )
 
-        # On disk first (added 2026-10-28): a request survives a restart of
-        # this process or of the factory, and the factory — a separate
-        # process — sees it. If the write fails, the request is not queued.
-        self._write_request(request)
-        self._insert_by_priority(request)
-        self._stats["priority_requests"] += 1
-        return request
-
-    def _insert_by_priority(self, request: PriorityRequest) -> None:
-        """Insert into the in-memory queue. Unchanged rule: CRITICAL goes to front."""
-        priority = request.priority
-        request_id = request.request_id
-        being_name = request.being_name
-        text = request.text
+        # Insert by priority — CRITICAL goes to front
         if priority == Priority.CRITICAL:
             self._priority_queue.insert(0, request)
             logger.warning(
@@ -621,111 +421,22 @@ class VoiceExpress:
             )
             self._priority_queue.insert(insert_at, request)
             logger.info(f"HIGH priority express queued: {request_id}")
-        elif priority == Priority.STANDARD:
-            # (2026-10-28) Ahead of any PRELOAD request: PRELOAD is the lowest
-            # level, and appending let a STANDARD request wait behind one.
-            insert_at = next(
-                (i for i, r in enumerate(self._priority_queue)
-                 if r.priority == Priority.PRELOAD),
-                len(self._priority_queue)
-            )
-            self._priority_queue.insert(insert_at, request)
-            logger.info(f"STANDARD priority express queued: {request_id}")
         else:
             self._priority_queue.append(request)
-            logger.info(f"PRELOAD priority express queued: {request_id}")
+            logger.info(f"STANDARD priority express queued: {request_id}")
 
-    def get_next_priority_request(
-        self, being_name: Optional[str] = None
-    ) -> Optional[PriorityRequest]:
+        self._stats["priority_requests"] += 1
+        return request
+
+    def get_next_priority_request(self) -> Optional[PriorityRequest]:
         """
         Get the next request from the priority queue.
         Called by the voice_engine synthesis loop.
-
-        being_name (added 2026-10-28) takes the first request for that being
-        only; other beings' requests stay queued for their own factory.
-
-        The request's file stays on disk until complete_priority_request() is
-        called, so a request handed out and then lost to a crash or a stop is
-        picked up again on the next load().
         """
         self._require_loaded()
-        for i, req in enumerate(self._priority_queue):
-            if being_name is None or req.being_name.lower() == being_name.lower():
-                self._priority_queue.pop(i)
-                self._in_flight[req.request_id] = req
-                return req
-        return None
-
-    def complete_priority_request(
-        self,
-        request: PriorityRequest,
-        phrase_id: Optional[str] = None,
-        error: Optional[str] = None,
-    ) -> Path:
-        """
-        (Added 2026-10-28) Close a request handed out by
-        get_next_priority_request(). Its file moves to priority_queue/done/
-        (served from the cache as phrase_id) or priority_queue/failed/ (with
-        the error), so the outcome stays on disk to read. Returns that path.
-        """
-        self._require_loaded()
-        request.completed_at = datetime.now(timezone.utc).isoformat()
-        request.error = error
-        record = request.to_dict()
-        record["phrase_id"] = phrase_id
-        record["status"] = "failed" if error else "done"
-        dest_dir = self.priority_queue_dir / record["status"]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f"{request.request_id}.json"
-        _write_json_atomic(dest, record)
-        src = self.priority_queue_dir / f"{request.request_id}.json"
-        if src.exists():
-            src.unlink()
-        self._in_flight.pop(request.request_id, None)
-        return dest
-
-    def refresh_priority_queue(self) -> int:
-        """
-        (Added 2026-10-28) Pick up requests another process wrote to the
-        queue folder since this instance last looked (AlphaVox queues them;
-        the factory takes them). Returns how many were added.
-        """
-        self._require_loaded()
-        known = {r.request_id for r in self._priority_queue} | set(self._in_flight)
-        new = [r for r in self._read_queue_dir() if r.request_id not in known]
-        for req in new:
-            self._insert_by_priority(req)
-        return len(new)
-
-    def _write_request(self, request: PriorityRequest) -> Path:
-        path = self.priority_queue_dir / f"{request.request_id}.json"
-        _write_json_atomic(path, request.to_dict())
-        return path
-
-    def _read_queue_dir(self) -> list[PriorityRequest]:
-        """
-        Every waiting request on disk, oldest first within each priority.
-        A file that cannot be read is moved to priority_queue/unreadable/ and
-        logged — never silently dropped, never guessed at.
-        """
-        out = []
-        for path in sorted(self.priority_queue_dir.glob("*.json")):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    out.append(PriorityRequest.from_dict(json.load(f)))
-            except Exception as e:
-                bad_dir = self.priority_queue_dir / "unreadable"
-                bad_dir.mkdir(parents=True, exist_ok=True)
-                os.replace(path, bad_dir / path.name)
-                logger.error(f"Unreadable priority request {path.name} moved to {bad_dir}: {e}")
-        out.sort(key=lambda r: (_PRIORITY_RANK[r.priority.value], r.submitted_at))
-        return out
-
-    def _load_priority_queue(self) -> None:
-        """Rebuild the in-memory queue from disk, CRITICAL first, oldest first within a level."""
-        self._priority_queue = self._read_queue_dir()
-        self._in_flight = {}
+        if not self._priority_queue:
+            return None
+        return self._priority_queue.pop(0)
 
     def get_queue_depth(self) -> dict:
         """Current priority queue depth by priority level."""

@@ -74,7 +74,3 @@ _archive_src/
 # Generated outputs
 funeral_outputs/
 
-
-# Packaging
-*.egg-info/
-.pytest_cache/
