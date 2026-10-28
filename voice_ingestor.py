@@ -22,7 +22,7 @@ PURPOSE:
 
     WATCH MODE:
         Run with --watch and it monitors the incoming/ folder continuously.
-        Yorkie drops a file in. It's live. No terminal. No commands.
+        Anyone drops a file in. It's live. No terminal. No commands.
         No asking anyone for help.
 
     This is the welcome mat. You drop it here. We handle the rest.
@@ -400,7 +400,7 @@ def watch_incoming(
     Watch the incoming/ folder continuously.
     Any supported audio file dropped in gets ingested automatically.
 
-    Yorkie drops a file in. It's live. No terminal. No commands.
+    Anyone drops a file in. It's live. No terminal. No commands.
     No asking anyone for help.
 
     Args:
@@ -483,7 +483,7 @@ if __name__ == "__main__":
                     "Drop audio files in. We handle the rest.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--being",    required=True, help="Being name (e.g. AlphaVox)")
+    parser.add_argument("--being",    required=True, help="Name of the being this voice belongs to")
     parser.add_argument("--language", default="en-US", help="BCP-47 language code")
     parser.add_argument("--watch",    action="store_true", help="Watch incoming/ folder continuously")
     parser.add_argument("--file",     help="Ingest a single specific file")

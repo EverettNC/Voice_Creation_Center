@@ -57,6 +57,7 @@ except ImportError:  # the standalone runner works without pytest
         raise _SkipException(reason)
 
 SPEAKER = "studio test"
+BEING = "being under test"
 
 # ── Check sounddevice availability ────────────────────────────────────────────
 try:
@@ -217,7 +218,7 @@ def test_live_studio_full_phase1_workflow(tmp_path):
 
     studio = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
 
-    session = studio.create_session("I love you", speaker=SPEAKER)
+    session = studio.create_session("I love you", speaker=SPEAKER, being=BEING)
     assert session.state == SessionState.CREATED
 
     studio.register_raw_take(session.id, str(raw_take))
@@ -228,7 +229,7 @@ def test_live_studio_full_phase1_workflow(tmp_path):
     assert session.validation_status == ValidationStatus.PASSED, session.validation_reasons
 
     studio.approve(session.id)
-    assert session.approved_by_everett is True
+    assert session.approved is True
 
     studio.export_approved(session.id, register=False)
     assert session.state == SessionState.EXPORTED
@@ -253,7 +254,7 @@ def test_live_studio_session_has_recording_stats(tmp_path):
     stats = r._write_wav(signal, raw, device_name="no device: computed from a known signal")
 
     studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("You are safe", speaker=SPEAKER)
+    session = studio.create_session("You are safe", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw))
     assert session.recording_stats is None, "no microphone was used, so there are no recording stats"
     session.recording_stats = stats.to_dict()
@@ -269,7 +270,7 @@ def test_live_studio_approve_requires_passing_validation(tmp_path):
     raw = write_voiced_wav(tmp_path / "raw.wav")
 
     studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("test phrase", speaker=SPEAKER)
+    session = studio.create_session("test phrase", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw))
 
     # Deliberately fail validation
@@ -290,13 +291,13 @@ def test_live_studio_reject_workflow(tmp_path):
     raw = write_voiced_wav(tmp_path / "raw.wav")
 
     studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("test", speaker=SPEAKER)
+    session = studio.create_session("test", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw))
     studio.mark_validation(session.id, transcript="test")
     studio.reject(session.id)
 
     assert session.state == SessionState.REJECTED
-    assert session.approved_by_everett is False
+    assert session.approved is False
 
     try:
         studio.export_approved(session.id, register=False)
@@ -310,7 +311,7 @@ def test_live_studio_reject_workflow(tmp_path):
 def test_live_studio_finish_capture_wrong_state(tmp_path):
     """finish_capture() raises ValueError if session is not RECORDING."""
     studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("test", speaker=SPEAKER)
+    session = studio.create_session("test", speaker=SPEAKER, being=BEING)
 
     try:
         studio.finish_capture(session.id)
@@ -366,7 +367,7 @@ def test_live_studio_capture_fixed_real_mic(tmp_path):
     _require_microphone()
 
     studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("I love you", speaker=SPEAKER)
+    session = studio.create_session("I love you", speaker=SPEAKER, being=BEING)
 
     print("\n  🎙️  Recording 'I love you' (1 second)...")
     studio.capture_take(session.id, duration_seconds=1.0, countdown=False)

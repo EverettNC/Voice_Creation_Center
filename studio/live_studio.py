@@ -10,8 +10,9 @@ PURPOSE:
 
     THE RULE:
         Raw takes stay in the Voice Creation Center.
-        Approved takes export to the AlphaVox phrase pack:
-            /Users/EverettN/packs/phrases/alphavox_cycled
+        Approved takes export to the phrase folder the being supplies
+        (LiveStudio's export_dir). The VCC names no being and no folder of
+        its own: every take says which being it belongs to.
 
     PHASE 2 ADDITIONS:
         capture_take() is now real. It calls studio/recorder.py which uses
@@ -56,13 +57,12 @@ from recorder import Recorder, RecordingStats  # studio/recorder.py  (Phase 2)
 
 logger = logging.getLogger("christman.live_studio")
 
-# ── The one constant that matters most ──────────────────────────────────────
-ALPHAVOX_APPROVED_EXPORT_DIR = Path("/Users/EverettN/packs/phrases/alphavox_cycled")
+# Approved takes export to the folder the being supplies (export_dir); there
+# is no default export folder and no default being.
 
-# Raw takes live in the Center — never in AlphaVox. Their folder is
+# Raw takes live in the Center — never in a being's folder. Their folder is
 # studio/raw under the VCC's one base directory (vcc_paths).
 
-DEFAULT_BEING    = "AlphaVox"
 DEFAULT_LANGUAGE = "en-US"
 
 
@@ -91,14 +91,14 @@ class StudioSession:
     speaker:           str
     target_phrase:     str
     phrase_key:        str
+    being:             str            # the being this take belongs to — always given
     take_number:       int = 1
     raw_path:          Optional[str] = None
     processed_path:    Optional[str] = None
     transcript:        Optional[str] = None
     validation_status: ValidationStatus = ValidationStatus.PENDING
-    approved_by_everett: bool = False
+    approved:          bool = False
     exported_to:       Optional[str] = None
-    being:             str = DEFAULT_BEING
     language:          str = DEFAULT_LANGUAGE
     state:             SessionState = SessionState.CREATED
 
@@ -147,15 +147,15 @@ class LiveStudio:
 
     def __init__(
         self,
-        export_dir: Optional[Path] = None,
+        export_dir: Path,
         device_index: Optional[int] = None,
         base_dir: Optional[Path] = None,
     ):
         """
         Args:
-            export_dir:   Override for approved take export directory.
-                          Defaults to ALPHAVOX_APPROVED_EXPORT_DIR.
-                          Tests pass a temp dir here — never the real /Users path.
+            export_dir:   Where approved takes are exported: the phrase
+                          folder the being supplies. Required; there is no
+                          default. Tests pass a temp dir here.
             device_index: Input device index for recording.
                           None = system default microphone.
             base_dir:     The VCC's base directory (vcc_paths): raw takes
@@ -164,7 +164,9 @@ class LiveStudio:
                           this repo.
         """
         self.paths = VCCPaths(base_dir)
-        self.export_dir = Path(export_dir) if export_dir else ALPHAVOX_APPROVED_EXPORT_DIR
+        if not export_dir:
+            raise ValueError("export_dir is required: the being supplies the folder its approved takes go to")
+        self.export_dir = Path(export_dir)
         self._sessions: dict[str, StudioSession] = {}
         self._recorder  = Recorder(device_index=device_index)
         self._active_recording_session_id: Optional[str] = None
@@ -175,7 +177,7 @@ class LiveStudio:
     # ── Device helpers ────────────────────────────────────────────────────────
 
     def list_input_devices(self):
-        """Print available input devices to help Everett choose his mic."""
+        """Print available input devices to help choose the microphone."""
         self._recorder.print_devices()
         return self._recorder.list_input_devices()
 
@@ -190,9 +192,11 @@ class LiveStudio:
         target_phrase: str,
         speaker: str,
         take_number: int = 1,
-        being: str = DEFAULT_BEING,
+        being: Optional[str] = None,
         language: str = DEFAULT_LANGUAGE,
     ) -> StudioSession:
+        if not being:
+            raise ValueError("being is required: say which being this take belongs to; there is no default being")
         session = StudioSession(
             speaker=speaker,
             target_phrase=target_phrase,
@@ -222,7 +226,7 @@ class LiveStudio:
     def register_raw_take(self, session_id: str, raw_path: str) -> StudioSession:
         """
         Attach a raw take wav that already exists on disk.
-        Used when Everett recorded outside the Center and is bringing it in.
+        Used when a take was recorded outside the Center and is being brought in.
         """
         session = self.get_session(session_id)
         wav = Path(raw_path)
@@ -335,7 +339,7 @@ class LiveStudio:
         Stop an open-ended recording and finalize the take.
 
         Call this after capture_take(session_id) with no duration_seconds,
-        when Everett is done speaking.
+        when the speaker is done speaking.
 
         Returns the updated session (state = TAKE_REGISTERED).
         """
@@ -447,7 +451,7 @@ class LiveStudio:
 
     def approve(self, session_id: str) -> StudioSession:
         """
-        Everett approves the take.
+        The reviewer approves the take.
         Only validated, passing takes can be approved.
         """
         session = self.get_session(session_id)
@@ -456,15 +460,15 @@ class LiveStudio:
                 "Cannot approve: validation has not passed "
                 f"(status: {session.validation_status.value})."
             )
-        session.approved_by_everett = True
+        session.approved = True
         session.state               = SessionState.APPROVED
-        logger.info("Session %s — APPROVED by Everett.", session_id)
+        logger.info("Session %s — APPROVED.", session_id)
         return session
 
     def reject(self, session_id: str) -> StudioSession:
-        """Everett rejects the take."""
+        """The reviewer rejects the take."""
         session = self.get_session(session_id)
-        session.approved_by_everett = False
+        session.approved = False
         session.state               = SessionState.REJECTED
         logger.info("Session %s — rejected.", session_id)
         return session
@@ -473,12 +477,12 @@ class LiveStudio:
 
     def export_approved(self, session_id: str, register: bool = True) -> StudioSession:
         """
-        Export an approved take to the AlphaVox phrase pack.
+        Export an approved take to the being's phrase folder (export_dir).
         Raw take stays in the Center. Only a copy leaves.
         """
         session = self.get_session(session_id)
 
-        if not session.approved_by_everett or session.state != SessionState.APPROVED:
+        if not session.approved or session.state != SessionState.APPROVED:
             raise ValueError("Cannot export: session is not approved.")
         if not session.raw_path:
             raise ValueError("Cannot export: no raw take registered.")

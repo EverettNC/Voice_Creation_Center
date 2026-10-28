@@ -66,7 +66,6 @@ __pycache__/
 *.pyc
 
 # Build / packaging artifacts
-icanhearyou.egg-info/
 
 # Legacy src archive we kept for safety
 _archive_src/

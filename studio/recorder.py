@@ -82,7 +82,7 @@ class RecorderState(str, Enum):
 class RecordingStats:
     """
     Metrics from a completed recording.
-    Used by the validation engine and Brockston dashboard.
+    Used by the validation engine and the admin dashboard.
     """
     duration_seconds:  float = 0.0
     sample_rate:       int   = SAMPLE_RATE
@@ -147,7 +147,7 @@ class Recorder:
 
         # Open-ended recording — stop when ready
         recorder.record_open("raw/take_001.wav")
-        # ... user speaks ...
+        # ... the speaker speaks ...
         stats = recorder.stop()
 
         # Playback preview
@@ -192,7 +192,7 @@ class Recorder:
     def list_input_devices(self) -> list[DeviceInfo]:
         """
         Return all available audio input devices.
-        Useful for letting Everett choose his mic before recording.
+        Useful for choosing the microphone before recording.
         """
         if self._sd is None:
             logger.error("sounddevice not available — cannot list devices.")

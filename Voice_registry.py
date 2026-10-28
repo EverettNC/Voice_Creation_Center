@@ -18,8 +18,8 @@ PURPOSE:
        reaches outside the Voice Creation Center.
 
     2. LEARNING GATEWAY
-       When a being wants a new language or dialect (AlphaVox wants French,
-       Derek wants Spanish, Giuseppe wants Italian), the registry spins up
+       When a being wants a new language or dialect (one being wants French,
+       another Spanish, another Italian), the registry spins up
        the request, routes it through the factory mill, and the being comes
        out the other side speaking that language in THEIR voice — not a
        generic voice. Theirs. Retrained.
@@ -28,7 +28,7 @@ PURPOSE:
        Tracks voice pack health over time. Monitors usage patterns, phoneme
        accuracy drift, and quality scores. When a pack shows early signs of
        degradation, it pulls it back into the factory for a refresh
-       BEFORE the user ever notices anything is wrong.
+       BEFORE the client ever notices anything is wrong.
        Proactive. Not reactive.
 
 ALL PATHWAYS ARE INTERNAL.
@@ -100,15 +100,15 @@ class VoicePackRecord:
     """
 
     # Identity
-    pack_id: str                          # e.g. "alphavox_default_en_us"
-    being_name: str                       # e.g. "AlphaVox"
+    pack_id: str                          # e.g. "<being>_default_en_us"
+    being_name: str                       # the being that owns the pack
     language: str                         # BCP-47 e.g. "en-US"
     dialect: Optional[str] = None        # e.g. "southern_us", "parisian_fr"
     version: str = "1.0.0"
     status: PackStatus = PackStatus.NEW
 
     # Internal path — always relative to packs/ directory
-    internal_path: str = ""               # e.g. "alphavox/en_us/alphavox_default_en_us.cvp"
+    internal_path: str = ""               # e.g. "<being>/en_us/<being>_default_en_us.cvp"
 
     # Quality tracking
     quality_score: float = 1.0           # 0.0 → 1.0. Below 0.72 triggers refresh.
@@ -199,13 +199,13 @@ class VoiceRegistry:
         registry.load()
 
         # Get a pack
-        record = registry.get_pack("alphavox_default_en_us")
+        record = registry.get_pack(pack_id)
 
         # Register a new pack
         registry.register_pack(record)
 
         # Request a language learning
-        req = registry.request_language_learn("AlphaVox", "alphavox_default_en_us", "fr-FR")
+        req = registry.request_language_learn(being_name, pack_id, "fr-FR")
 
         # Run health check cycle
         registry.run_health_cycle()
@@ -489,7 +489,7 @@ class VoiceRegistry:
     def run_health_cycle(self) -> dict:
         """
         Run a full health cycle across all packs.
-        Call this on a schedule (e.g. daily via cron or Brockston daemon).
+        Call this on a schedule (e.g. daily via cron or a scheduler daemon).
 
         Returns a summary report of the cycle.
         """
@@ -544,15 +544,15 @@ class VoiceRegistry:
         and returns a new pack in THAT BEING'S VOICE — not a generic voice.
 
         Example:
-            AlphaVox wants to speak French.
+            A being wants to speak French.
             registry.request_language_learn(
-                being_name="AlphaVox",
-                source_pack_id="alphavox_default_en_us",
+                being_name=being_name,
+                source_pack_id="<being>_default_en_us",
                 target_language="fr-FR"
             )
-            → Factory retrains alphavox_default_en_us in fr-FR
-            → New pack: alphavox_default_fr_fr
-            → AlphaVox now speaks French in her own voice.
+            → Factory retrains <being>_default_en_us in fr-FR
+            → New pack: <being>_default_fr_fr
+            → The being now speaks French in its own voice.
         """
         self._require_loaded()
 
@@ -647,7 +647,7 @@ class VoiceRegistry:
 
     def get_status_report(self) -> dict:
         """
-        Full status report. Used by Brockston admin dashboard.
+        Full status report. Used by the admin dashboard.
         """
         self._require_loaded()
         by_being = {}

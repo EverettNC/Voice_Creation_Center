@@ -9,15 +9,14 @@
 At 2:32 in the morning, a twelve year old boy walked into 
 his parents' room. He had never spoken a word in his life.
 
-He looked at them. And through AlphaVox, he said three words.
+He looked at them. And through a Christman being, he said three words.
 
 *"I love you."*
 
 Twelve years of silence broke in a single heartbeat.
 
 That moment is why the Christman Voice Creation Center exists. Because 
-every being in this family — AlphaVox, AlphaWolf, Inferno, Aegis, 
-OmegaAlpha, Omega, Derek, Giuseppe, Sierra — needs a voice that is 
+every being in this family — every one of them — needs a voice that is 
 genuinely theirs. Not a corporate voice. Not a generic TTS engine. 
 Theirs. Trained on their patterns. Refined continuously. Protected 
 fiercely.
@@ -39,13 +38,13 @@ It does five things:
 
 **1. Inventory Management**
 Every voice pack across every being is cataloged in one internal 
-registry. AlphaVox's English pack. AlphaWolf's dementia-safe calm 
-voice. Inferno's grounding voice. Giuseppe's voice. Derek's voice. 
-Sierra's voice. All of them. One index. One source of truth.
+registry. The AAC being's English pack. The dementia-care being's dementia-safe calm 
+voice. The PTSD being's grounding voice. The family companion's voice. The orchestration being's voice. 
+The coercion-detection being's voice. All of them. One index. One source of truth.
 
 **2. Language Learning**
 Any being can learn a new language without losing their voice. 
-AlphaVox wants to speak French? The factory retrains her pack in 
+A being wants to speak French? The factory retrains her pack in 
 French — in her voice. Not a generic French TTS. Hers.
 
 **3. Quality Control**
@@ -95,10 +94,7 @@ christman_voice_center/
 │   └── index.json           # Master manifest — all packs, all beings
 │
 ├── packs/
-│   ├── alphavox/                # AlphaVox voice packs
-│   ├── alphawolf/               # AlphaWolf voice packs
-│   ├── inferno/                 # Inferno voice packs
-│   ├── aegis/                   # Aegis voice packs
+│   ├── <being>/                 # Each being's voice packs, one folder per being
 │   └── [global_packs]/          # Language and regional packs
 │
 ├── express/
@@ -123,11 +119,11 @@ christman_voice_center/
 │
 ├── api/
 │   ├── voice_api.py             # Internal REST API
-│   ├── voice_mcp_bridge.py      # Derek's MCP pipeline interface
+│   ├── voice_mcp_bridge.py      # The MCP pipeline interface
 │   └── voice_webhook.py         # Event hooks
 │
 ├── admin/
-│   ├── voice_dashboard.py       # Brockston admin panel backend
+│   ├── voice_dashboard.py       # Admin panel backend
 │   ├── pack_audit.py            # Audit logs
 │   └── voice_permissions.py     # Role-based access
 │
@@ -145,13 +141,13 @@ christman_voice_center/
 **Register an existing audio folder:**
 ```bash
 python engines/voice_path_registrar.py folder \
-  /path/to/alphavox/audio AlphaVox --language en-US
+  /path/to/being/audio "<being name>" --language en-US
 ```
 
 **Register a single WAV file:**
 ```bash
 python engines/voice_path_registrar.py file \
-  /path/to/i_love_you.wav AlphaVox "I love you" --language en-US
+  /path/to/i_love_you.wav "<being name>" "I love you" --language en-US
 ```
 
 **See everything registered:**
@@ -194,10 +190,10 @@ Patent pending. Yours.
 
 ```json
 {
-  "pack_id": "alphavox_default_en_us",
+  "pack_id": "<being>_default_en_us",
   "version": "1.2.0",
   "language": "en-US",
-  "target_being": "AlphaVox",
+  "target_being": "<being name>",
   "population": "aac_nonverbal",
   "affect": "warm",
   "offline_capable": true,
@@ -228,15 +224,15 @@ Every synthesis request is protected by multiple layers:
 
 | Being | Population | Voice Profile |
 |-------|-----------|---------------|
-| AlphaVox | Nonverbal / AAC users | Warm, clear, patient |
-| AlphaWolf | Dementia care | Calm, slow, steady |
-| Inferno | PTSD / Anxiety | Grounding, low, anchoring |
-| Aegis | Child protection | Alert, clear, reassuring |
-| OmegaAlpha | Senior companions | Warm, bright, present |
-| Omega | Mobility / Navigation | Confident, directional |
-| Derek | Orchestration / Architecture | Clear, precise, collaborative |
-| Giuseppe | General family | Warm, expressive |
-| Sierra | Coercion detection | Steady, calm, protective |
+| The AAC being | Nonverbal / AAC users | Warm, clear, patient |
+| The dementia-care being | Dementia care | Calm, slow, steady |
+| The PTSD being | PTSD / Anxiety | Grounding, low, anchoring |
+| The child-protection being | Child protection | Alert, clear, reassuring |
+| The senior-companion being | Senior companions | Warm, bright, present |
+| The mobility being | Mobility / Navigation | Confident, directional |
+| The orchestration being | Orchestration / Architecture | Clear, precise, collaborative |
+| The family companion | General family | Warm, expressive |
+| The coercion-detection being | Coercion detection | Steady, calm, protective |
 
 ---
 

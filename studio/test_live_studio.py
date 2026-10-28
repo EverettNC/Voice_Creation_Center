@@ -26,6 +26,7 @@ import live_studio as ls
 from signals_for_tests import write_noise_wav, write_silent_wav, write_voiced_wav
 
 SPEAKER = "studio test"
+BEING = "being under test"
 
 
 def test_create_attach_approve_export(tmp_path):
@@ -35,7 +36,7 @@ def test_create_attach_approve_export(tmp_path):
     studio = ls.LiveStudio(export_dir=export_dir, base_dir=tmp_path)
 
     # create
-    session = studio.create_session("I love you", speaker=SPEAKER)
+    session = studio.create_session("I love you", speaker=SPEAKER, being=BEING)
     assert session.state == ls.SessionState.CREATED
     assert session.exported_to is None
 
@@ -51,7 +52,7 @@ def test_create_attach_approve_export(tmp_path):
 
     # approve
     studio.approve(session.id)
-    assert session.approved_by_everett is True
+    assert session.approved is True
     assert session.state == ls.SessionState.APPROVED
 
     # export (register=False keeps it off the real index)
@@ -69,7 +70,7 @@ def test_silent_take_is_refused(tmp_path):
     """A WAV of pure silence must never validate, approve or export, whatever the transcript says."""
     raw_take = write_silent_wav(tmp_path / "silence.wav", seconds=1.0)
     studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("I love you", speaker=SPEAKER)
+    session = studio.create_session("I love you", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw_take))
 
     studio.mark_validation(session.id, transcript="I love you", passed=True)
@@ -94,7 +95,7 @@ def test_unvoiced_noise_take_is_refused(tmp_path):
     """Loud noise with no voice in it is refused too: loudness alone is not speech."""
     raw_take = write_noise_wav(tmp_path / "noise.wav")
     studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("Help is coming", speaker=SPEAKER)
+    session = studio.create_session("Help is coming", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="Help is coming")
     assert session.validation_status == ls.ValidationStatus.FAILED
@@ -104,7 +105,7 @@ def test_unvoiced_noise_take_is_refused(tmp_path):
 def test_too_short_take_is_refused(tmp_path):
     raw_take = write_voiced_wav(tmp_path / "short.wav", seconds=0.2)
     studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("Yes", speaker=SPEAKER)
+    session = studio.create_session("Yes", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="Yes")
     assert session.validation_status == ls.ValidationStatus.FAILED
@@ -118,7 +119,7 @@ def test_export_registers_into_index(tmp_path):
     temp_index = tmp_path / "express" / "express_index.json"
 
     studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("You are safe", speaker=SPEAKER)
+    session = studio.create_session("You are safe", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="You are safe")
     studio.approve(session.id)
@@ -133,7 +134,7 @@ def test_export_registers_into_index(tmp_path):
 def test_cannot_approve_without_passing_validation(tmp_path):
     raw_take = write_voiced_wav(tmp_path / "r.wav")
     studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
-    session = studio.create_session("hi", speaker=SPEAKER)
+    session = studio.create_session("hi", speaker=SPEAKER, being=BEING)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="kill yourself")  # blocked by validator
     assert session.validation_status == ls.ValidationStatus.FAILED
@@ -154,7 +155,7 @@ def test_capture_without_an_input_device_refuses_and_records_nothing(tmp_path):
     """
     studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     studio._recorder._sd = None
-    session = studio.create_session("hello", speaker=SPEAKER)
+    session = studio.create_session("hello", speaker=SPEAKER, being=BEING)
     for duration in (None, 1.0):
         try:
             studio.capture_take(session.id, duration_seconds=duration, countdown=False)
@@ -163,6 +164,21 @@ def test_capture_without_an_input_device_refuses_and_records_nothing(tmp_path):
             assert "microphone" in str(e)
         assert session.state == ls.SessionState.CREATED
         assert session.raw_path is None
+
+
+def test_there_is_no_default_being_or_export_folder(tmp_path):
+    """The VCC names no being: every studio is handed its export folder, every take its being."""
+    try:
+        ls.LiveStudio(export_dir=None, base_dir=tmp_path)
+        assert False, "a studio without an export folder must be refused"
+    except ValueError:
+        pass
+    studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
+    try:
+        studio.create_session("hello", speaker=SPEAKER)
+        assert False, "a take without its being must be refused"
+    except ValueError:
+        pass
 
 
 # ── Standalone runner ────────────────────────────────────────────────────────
