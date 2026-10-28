@@ -35,8 +35,11 @@ from typing import Optional
 
 logger = logging.getLogger("christman.voice_path_registrar")
 
-EXPRESS_ROOT  = Path(__file__).parent.parent / "express"
-EXPRESS_INDEX = EXPRESS_ROOT / "express_index.json"
+import sys as _sys
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in _sys.path:
+    _sys.path.insert(0, _REPO_ROOT)
+from vcc_paths import VCCPaths  # one base directory for the whole VCC
 
 
 def _get_wav_duration(wav_path: Path) -> float:
@@ -84,11 +87,12 @@ def _infer_text_from_filename(filename: str) -> str:
     return stem.replace("_", " ").replace("-", " ").strip()
 
 
-def _load_index() -> dict:
+def _load_index(base_dir: Optional[str] = None) -> dict:
     """Load the current express index from disk."""
-    EXPRESS_ROOT.mkdir(parents=True, exist_ok=True)
+    paths = VCCPaths(base_dir)
+    paths.express.mkdir(parents=True, exist_ok=True)
 
-    if not EXPRESS_INDEX.exists():
+    if not paths.express_index.exists():
         return {
             "meta": {
                 "version": "1.0.0",
@@ -99,20 +103,20 @@ def _load_index() -> dict:
         }
 
     try:
-        with open(EXPRESS_INDEX, "r", encoding="utf-8") as f:
+        with open(paths.express_index, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         logger.error(f"Failed to load express index: {e}")
         return {"meta": {}, "phrases": []}
 
 
-def _save_index(index: dict) -> None:
+def _save_index(index: dict, base_dir: Optional[str] = None) -> None:
     """Save the express index to disk."""
     index["meta"]["last_updated"] = datetime.now(timezone.utc).isoformat()
     index["meta"]["total_phrases"] = len(index.get("phrases", []))
 
     try:
-        with open(EXPRESS_INDEX, "w", encoding="utf-8") as f:
+        with open(VCCPaths(base_dir).express_index, "w", encoding="utf-8") as f:
             json.dump(index, f, indent=2)
         logger.info(f"Express index saved — {index['meta']['total_phrases']} phrases.")
     except Exception as e:
@@ -125,7 +129,8 @@ def register_audio_folder(
     language: str = "en-US",
     quality_score: float = 1.0,
     text_map: Optional[dict] = None,
-    dry_run: bool = False
+    dry_run: bool = False,
+    base_dir: Optional[str] = None,
 ) -> dict:
     """
     Scan a folder for WAV files and register every one into the
@@ -174,7 +179,7 @@ def register_audio_folder(
         f"[{language}] in {folder_path}"
     )
 
-    index = _load_index()
+    index = _load_index(base_dir)
     existing_ids = {p["phrase_id"] for p in index.get("phrases", [])}
 
     registered = 0
@@ -241,7 +246,7 @@ def register_audio_folder(
     # Write to index unless dry run
     if not dry_run and new_phrases:
         index.setdefault("phrases", []).extend(new_phrases)
-        _save_index(index)
+        _save_index(index, base_dir)
 
     report = {
         "success": True,
@@ -268,7 +273,8 @@ def register_single_file(
     being_name: str,
     language: str,
     text: str,
-    quality_score: float = 1.0
+    quality_score: float = 1.0,
+    base_dir: Optional[str] = None,
 ) -> dict:
     """
     Register a single WAV file into the express index.
@@ -290,7 +296,7 @@ def register_single_file(
         logger.error(f"WAV file not found: {wav_path}")
         return {"success": False, "error": f"File not found: {wav_path}"}
 
-    index = _load_index()
+    index = _load_index(base_dir)
     existing_ids = {p["phrase_id"] for p in index.get("phrases", [])}
 
     phrase_id = _make_phrase_id(text, being_name, language)
@@ -324,7 +330,7 @@ def register_single_file(
     }
 
     index.setdefault("phrases", []).append(phrase_entry)
-    _save_index(index)
+    _save_index(index, base_dir)
 
     logger.info(
         f"Single file registered: '{text}' → {wav.name} "
@@ -339,12 +345,12 @@ def register_single_file(
     }
 
 
-def show_index_report() -> None:
+def show_index_report(base_dir: Optional[str] = None) -> None:
     """
     Print a human-readable report of everything in the express index.
     Run this from the terminal to see what's registered.
     """
-    index = _load_index()
+    index = _load_index(base_dir)
     phrases = index.get("phrases", [])
 
     print("\n" + "="*60)
@@ -380,6 +386,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Christman Voice Center — Path Registrar"
     )
+    parser.add_argument("--base-dir", default=None,
+                        help="The VCC's base directory (default: $VCC_HOME, else this repo)")
     subparsers = parser.add_subparsers(dest="command")
 
     # Register a folder
@@ -411,7 +419,8 @@ if __name__ == "__main__":
             being_name=args.being,
             language=args.language,
             quality_score=args.quality,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            base_dir=args.base_dir,
         )
         print(json.dumps(result, indent=2))
 
@@ -421,12 +430,13 @@ if __name__ == "__main__":
             being_name=args.being,
             language=args.language,
             text=args.text,
-            quality_score=args.quality
+            quality_score=args.quality,
+            base_dir=args.base_dir,
         )
         print(json.dumps(result, indent=2))
 
     elif args.command == "report":
-        show_index_report()
+        show_index_report(args.base_dir)
 
     else:
         parser.print_help()

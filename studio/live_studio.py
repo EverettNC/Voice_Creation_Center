@@ -50,6 +50,7 @@ for _p in (str(_CENTER_ROOT), str(_ENGINES_DIR), str(_STUDIO_DIR)):
 
 import voice_validator         # engines/voice_validator.py
 import take_listener         # studio/take_listener.py — listens to the take
+from vcc_paths import VCCPaths  # one base directory for the whole VCC
 import voice_path_registrar    # engines/voice_path_registrar.py
 from recorder import Recorder, RecordingStats  # studio/recorder.py  (Phase 2)
 
@@ -58,8 +59,8 @@ logger = logging.getLogger("christman.live_studio")
 # ── The one constant that matters most ──────────────────────────────────────
 ALPHAVOX_APPROVED_EXPORT_DIR = Path("/Users/EverettN/packs/phrases/alphavox_cycled")
 
-# Raw takes live in the Center — never in AlphaVox
-RAW_TAKES_DIR = _CENTER_ROOT / "studio" / "raw"
+# Raw takes live in the Center — never in AlphaVox. Their folder is
+# studio/raw under the VCC's one base directory (vcc_paths).
 
 DEFAULT_BEING    = "AlphaVox"
 DEFAULT_LANGUAGE = "en-US"
@@ -148,6 +149,7 @@ class LiveStudio:
         self,
         export_dir: Optional[Path] = None,
         device_index: Optional[int] = None,
+        base_dir: Optional[Path] = None,
     ):
         """
         Args:
@@ -156,14 +158,19 @@ class LiveStudio:
                           Tests pass a temp dir here — never the real /Users path.
             device_index: Input device index for recording.
                           None = system default microphone.
+            base_dir:     The VCC's base directory (vcc_paths): raw takes
+                          go to studio/raw under it, and exports register
+                          into its express index. None = $VCC_HOME, else
+                          this repo.
         """
+        self.paths = VCCPaths(base_dir)
         self.export_dir = Path(export_dir) if export_dir else ALPHAVOX_APPROVED_EXPORT_DIR
         self._sessions: dict[str, StudioSession] = {}
         self._recorder  = Recorder(device_index=device_index)
         self._active_recording_session_id: Optional[str] = None
 
         # Ensure raw takes directory exists
-        RAW_TAKES_DIR.mkdir(parents=True, exist_ok=True)
+        self.paths.studio_raw.mkdir(parents=True, exist_ok=True)
 
     # ── Device helpers ────────────────────────────────────────────────────────
 
@@ -265,7 +272,7 @@ class LiveStudio:
             f"_take{session.take_number}"
             f"_{session.id[:6]}.wav"
         )
-        output_path = RAW_TAKES_DIR / filename
+        output_path = self.paths.studio_raw / filename
 
         session.state = SessionState.RECORDING
         self._active_recording_session_id = session_id
@@ -497,6 +504,7 @@ class LiveStudio:
                     being_name=session.being,
                     language=session.language,
                     text=session.target_phrase,
+                    base_dir=str(self.paths.base),
                 )
                 logger.info(
                     "Session %s — express index registration: %s", session_id, result

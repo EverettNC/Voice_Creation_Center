@@ -18,18 +18,20 @@ from typing import Optional
 
 logger = logging.getLogger("christman.voice_loader")
 
-PACKS_DIR = Path(__file__).parent.parent / "packs"
-INVENTORY_DIR = Path(__file__).parent.parent / "inventory"
-INDEX_FILE = INVENTORY_DIR / "__index__.json"
+import sys as _sys
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in _sys.path:
+    _sys.path.insert(0, _REPO_ROOT)
+from vcc_paths import VCCPaths  # one base directory for the whole VCC
 
 
-def load_pack(pack_id: str) -> Optional[dict]:
+def load_pack(pack_id: str, base_dir: Optional[str] = None) -> Optional[dict]:
     """
     Load a voice pack by ID from internal inventory.
     Returns the pack manifest dict, or None if not found.
     Never raises — always returns or logs.
     """
-    pack_path = PACKS_DIR / pack_id
+    pack_path = VCCPaths(base_dir).packs / pack_id
     manifest = pack_path / "manifest.json"
 
     if not pack_path.exists():
@@ -50,17 +52,18 @@ def load_pack(pack_id: str) -> Optional[dict]:
         return None
 
 
-def list_packs(being: str = None, language: str = None) -> list[dict]:
+def list_packs(being: str = None, language: str = None, base_dir: Optional[str] = None) -> list[dict]:
     """
     List all available packs from the master index.
     Optionally filter by being name or language code.
     """
-    if not INDEX_FILE.exists():
+    index_file = VCCPaths(base_dir).inventory_index
+    if not index_file.exists():
         logger.warning("Master index not found. Run voice_registry to build it.")
         return []
 
     try:
-        with open(INDEX_FILE, "r", encoding="utf-8") as f:
+        with open(index_file, "r", encoding="utf-8") as f:
             index = json.load(f)
 
         packs = index.get("packs", [])
@@ -78,12 +81,12 @@ def list_packs(being: str = None, language: str = None) -> list[dict]:
         return []
 
 
-def pack_exists(pack_id: str) -> bool:
+def pack_exists(pack_id: str, base_dir: Optional[str] = None) -> bool:
     """Quick existence check without loading the full pack."""
-    return (PACKS_DIR / pack_id / "manifest.json").exists()
+    return (VCCPaths(base_dir).packs / pack_id / "manifest.json").exists()
 
 
-def get_pack_path(pack_id: str) -> Optional[Path]:
+def get_pack_path(pack_id: str, base_dir: Optional[str] = None) -> Optional[Path]:
     """Return the internal path to a pack directory."""
-    path = PACKS_DIR / pack_id
+    path = VCCPaths(base_dir).packs / pack_id
     return path if path.exists() else None

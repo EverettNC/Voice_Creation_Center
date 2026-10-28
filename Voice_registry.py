@@ -56,10 +56,10 @@ logger = logging.getLogger("christman.voice_registry")
 # Internal paths — all routing stays inside the Voice Creation Center
 # ---------------------------------------------------------------------------
 
-REGISTRY_ROOT = Path(__file__).parent.parent  # christman_voice_center/
-PACKS_DIR     = REGISTRY_ROOT / "packs"
-INVENTORY_DIR = REGISTRY_ROOT / "inventory"
-INDEX_FILE    = INVENTORY_DIR / "__index__.json"
+# Every path comes from vcc_paths: the base_dir passed to VoiceRegistry,
+# else $VCC_HOME, else this repo. (It used to be Path(__file__).parent.parent,
+# which from the repo root is the folder ABOVE the repo.)
+from vcc_paths import VCCPaths
 
 # Degradation threshold — when quality score drops below this, auto-refresh triggers
 DEGRADATION_THRESHOLD = 0.72
@@ -211,14 +211,15 @@ class VoiceRegistry:
         registry.run_health_cycle()
     """
 
-    def __init__(self):
+    def __init__(self, base_dir: Optional[str] = None):
         self._packs: dict[str, VoicePackRecord] = {}
         self._learn_queue: list[LearnRequest] = []
         self._loaded = False
 
         # Ensure internal directories exist
-        PACKS_DIR.mkdir(parents=True, exist_ok=True)
-        INVENTORY_DIR.mkdir(parents=True, exist_ok=True)
+        self.paths = VCCPaths(base_dir)
+        self.paths.packs.mkdir(parents=True, exist_ok=True)
+        self.paths.inventory.mkdir(parents=True, exist_ok=True)
 
     # -----------------------------------------------------------------------
     # Load & Save
@@ -230,14 +231,14 @@ class VoiceRegistry:
         Creates a fresh index if none exists yet.
         Returns True if successful.
         """
-        if not INDEX_FILE.exists():
+        if not self.paths.inventory_index.exists():
             logger.info("No index found — starting fresh registry.")
             self._loaded = True
             self._save()
             return True
 
         try:
-            with open(INDEX_FILE, "r", encoding="utf-8") as f:
+            with open(self.paths.inventory_index, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             for pack_data in data.get("packs", []):
@@ -276,7 +277,7 @@ class VoiceRegistry:
                 "packs": [r.to_dict() for r in self._packs.values()],
                 "learn_queue": [r.to_dict() for r in self._learn_queue]
             }
-            with open(INDEX_FILE, "w", encoding="utf-8") as f:
+            with open(self.paths.inventory_index, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             return True
 

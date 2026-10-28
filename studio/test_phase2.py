@@ -215,7 +215,7 @@ def test_live_studio_full_phase1_workflow(tmp_path):
     """
     raw_take = write_voiced_wav(tmp_path / "raw_take.wav")
 
-    studio = LiveStudio(export_dir=tmp_path / "out")
+    studio = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
 
     session = studio.create_session("I love you", speaker=SPEAKER)
     assert session.state == SessionState.CREATED
@@ -252,7 +252,7 @@ def test_live_studio_session_has_recording_stats(tmp_path):
     raw = tmp_path / "raw.wav"
     stats = r._write_wav(signal, raw, device_name="no device: computed from a known signal")
 
-    studio  = LiveStudio(export_dir=tmp_path / "out")
+    studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("You are safe", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw))
     assert session.recording_stats is None, "no microphone was used, so there are no recording stats"
@@ -268,7 +268,7 @@ def test_live_studio_approve_requires_passing_validation(tmp_path):
     """approve() raises ValueError if validation did not pass."""
     raw = write_voiced_wav(tmp_path / "raw.wav")
 
-    studio  = LiveStudio(export_dir=tmp_path / "out")
+    studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("test phrase", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw))
 
@@ -289,7 +289,7 @@ def test_live_studio_reject_workflow(tmp_path):
     """Rejected sessions cannot be exported."""
     raw = write_voiced_wav(tmp_path / "raw.wav")
 
-    studio  = LiveStudio(export_dir=tmp_path / "out")
+    studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("test", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw))
     studio.mark_validation(session.id, transcript="test")
@@ -309,7 +309,7 @@ def test_live_studio_reject_workflow(tmp_path):
 
 def test_live_studio_finish_capture_wrong_state(tmp_path):
     """finish_capture() raises ValueError if session is not RECORDING."""
-    studio  = LiveStudio(export_dir=tmp_path / "out")
+    studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("test", speaker=SPEAKER)
 
     try:
@@ -321,9 +321,9 @@ def test_live_studio_finish_capture_wrong_state(tmp_path):
     print("PASS  test_live_studio_finish_capture_wrong_state")
 
 
-def test_live_studio_list_devices_no_crash():
+def test_live_studio_list_devices_no_crash(tmp_path):
     """list_input_devices() returns without crashing."""
-    studio  = LiveStudio()
+    studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     devices = studio.list_input_devices()
     assert isinstance(devices, list)
     print(f"PASS  test_live_studio_list_devices_no_crash  ({len(devices)} device(s))")
@@ -365,7 +365,7 @@ def test_live_studio_capture_fixed_real_mic(tmp_path):
     """
     _require_microphone()
 
-    studio  = LiveStudio(export_dir=tmp_path / "out")
+    studio  = LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("I love you", speaker=SPEAKER)
 
     print("\n  🎙️  Recording 'I love you' (1 second)...")
@@ -400,7 +400,7 @@ def _run_all():
         (test_live_studio_approve_requires_passing_validation, True),
         (test_live_studio_reject_workflow,                  True),
         (test_live_studio_finish_capture_wrong_state,       True),
-        (test_live_studio_list_devices_no_crash,            None),
+        (test_live_studio_list_devices_no_crash,            True),
         (test_recorder_record_fixed_real_mic,               True),
         (test_live_studio_capture_fixed_real_mic,           True),
     ]
