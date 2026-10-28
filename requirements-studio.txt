@@ -1,0 +1,6 @@
+# The Live Studio's microphone capture and playback preview.
+# Only needed on the machine that records: pip install -r requirements-studio.txt
+# On a Mac, sounddevice also needs PortAudio:  brew install portaudio
+-r requirements.txt
+sounddevice
+soundfile
