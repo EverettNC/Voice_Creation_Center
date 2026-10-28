@@ -6,7 +6,7 @@
 
 ## Why This Exists
 
-At 2:32 in the morning, a twelve year old boy named Dusty walked into 
+At 2:32 in the morning, a twelve year old boy walked into 
 his parents' room. He had never spoken a word in his life.
 
 He looked at them. And through AlphaVox, he said three words.
