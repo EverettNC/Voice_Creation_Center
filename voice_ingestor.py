@@ -46,12 +46,12 @@ from typing import Optional
 logger = logging.getLogger("christman.voice_ingestor")
 
 # ── Internal paths ────────────────────────────────────────────────────────────
-CENTER_ROOT  = Path(__file__).parent.parent
-INCOMING_DIR = CENTER_ROOT / "incoming"
-PROCESSED_DIR = CENTER_ROOT / "processed"
-FAILED_DIR   = CENTER_ROOT / "failed"
-PHRASES_DIR  = CENTER_ROOT / "packs" / "phrases"
-EXPRESS_INDEX = CENTER_ROOT / "express" / "express_index.json"
+# incoming/, processed/, failed/, packs/phrases/ and express/express_index.json
+# all sit under the VCC's one base directory (vcc_paths): the base_dir passed
+# in, else $VCC_HOME, else this repo. (They used to be built from
+# Path(__file__).parent.parent, which from the repo root is the folder ABOVE
+# the repo.)
+from vcc_paths import VCCPaths
 
 # Silence detection defaults
 SILENCE_THRESH_DB  = -40    # dB — anything quieter than this is silence
@@ -65,10 +65,10 @@ SUPPORTED_FORMATS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _ensure_dirs():
+def _ensure_dirs(paths: VCCPaths) -> None:
     """Ensure all required directories exist."""
-    for d in [INCOMING_DIR, PROCESSED_DIR, FAILED_DIR, PHRASES_DIR,
-              CENTER_ROOT / "express"]:
+    for d in [paths.incoming, paths.processed, paths.failed, paths.ingested_phrases,
+              paths.express]:
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -84,24 +84,24 @@ def _infer_text_from_filename(filename: str) -> str:
     return stem.replace("_", " ").replace("-", " ").strip()
 
 
-def _load_express_index() -> dict:
+def _load_express_index(paths: VCCPaths) -> dict:
     """Load the express index."""
-    if not EXPRESS_INDEX.exists():
+    if not paths.express_index.exists():
         return {"meta": {}, "phrases": []}
     try:
-        with open(EXPRESS_INDEX, "r", encoding="utf-8") as f:
+        with open(paths.express_index, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         logger.error(f"Failed to load express index: {e}")
         return {"meta": {}, "phrases": []}
 
 
-def _save_express_index(index: dict) -> None:
+def _save_express_index(index: dict, paths: VCCPaths) -> None:
     """Save the express index."""
     index["meta"]["last_updated"] = datetime.now(timezone.utc).isoformat()
     index["meta"]["total_phrases"] = len(index.get("phrases", []))
     try:
-        with open(EXPRESS_INDEX, "w", encoding="utf-8") as f:
+        with open(paths.express_index, "w", encoding="utf-8") as f:
             json.dump(index, f, indent=2)
     except Exception as e:
         logger.error(f"Failed to save express index: {e}")
@@ -245,7 +245,7 @@ def split_on_silence(
 
 # ── Registration ──────────────────────────────────────────────────────────────
 
-def register_phrases(phrases: list[dict]) -> int:
+def register_phrases(phrases: list[dict], base_dir: Optional[str] = None) -> int:
     """
     Register a list of phrases into the express index.
     Skips duplicates. Returns count of newly registered phrases.
@@ -253,7 +253,8 @@ def register_phrases(phrases: list[dict]) -> int:
     if not phrases:
         return 0
 
-    index = _load_express_index()
+    paths = VCCPaths(base_dir)
+    index = _load_express_index(paths)
     existing_ids = {p["phrase_id"] for p in index.get("phrases", [])}
 
     new_phrases = []
@@ -266,7 +267,7 @@ def register_phrases(phrases: list[dict]) -> int:
 
     if new_phrases:
         index.setdefault("phrases", []).extend(new_phrases)
-        _save_express_index(index)
+        _save_express_index(index, paths)
         logger.info(f"Registered {len(new_phrases)} new phrases into express index.")
 
     return len(new_phrases)
@@ -279,6 +280,7 @@ def ingest_file(
     being_name: str,
     language: str = "en-US",
     phrase_map: Optional[list] = None,
+    base_dir: Optional[str] = None,
 ) -> dict:
     """
     Full ingestion pipeline for a single audio file.
@@ -294,7 +296,8 @@ def ingest_file(
     Returns:
         Ingestion report dict.
     """
-    _ensure_dirs()
+    paths = VCCPaths(base_dir)
+    _ensure_dirs(paths)
     report = {
         "file":        input_path.name,
         "being_name":  being_name,
@@ -322,17 +325,17 @@ def ingest_file(
     try:
         # Step 1 — Convert to WAV if needed
         if suffix != ".wav":
-            wav_path = PHRASES_DIR / f"{input_path.stem}_converted.wav"
+            wav_path = paths.ingested_phrases / f"{input_path.stem}_converted.wav"
             if not convert_to_wav(input_path, wav_path):
                 report["errors"].append("Conversion to WAV failed.")
-                shutil.move(str(input_path), str(FAILED_DIR / input_path.name))
+                shutil.move(str(input_path), str(paths.failed / input_path.name))
                 return report
             report["converted"] = True
         else:
             wav_path = input_path
 
         # Step 2 — Split on silence
-        output_dir = PHRASES_DIR / being_name.lower()
+        output_dir = paths.ingested_phrases / being_name.lower()
         phrases = split_on_silence(
             wav_path=wav_path,
             being_name=being_name,
@@ -345,19 +348,19 @@ def ingest_file(
                 "No valid phrases found after splitting. "
                 "Try adjusting silence threshold or check audio quality."
             )
-            shutil.move(str(input_path), str(FAILED_DIR / input_path.name))
+            shutil.move(str(input_path), str(paths.failed / input_path.name))
             return report
 
         report["phrases"] = len(phrases)
 
         # Step 3 — Register into express index
-        registered = register_phrases(phrases)
+        registered = register_phrases(phrases, base_dir)
         report["registered"] = registered
 
         # Step 4 — Move original to processed
         shutil.move(
             str(input_path),
-            str(PROCESSED_DIR / input_path.name)
+            str(paths.processed / input_path.name)
         )
 
         report["success"] = True
@@ -370,7 +373,7 @@ def ingest_file(
         logger.error(f"Ingestion failed for {input_path.name}: {e}", exc_info=True)
         report["errors"].append(str(e))
         try:
-            shutil.move(str(input_path), str(FAILED_DIR / input_path.name))
+            shutil.move(str(input_path), str(paths.failed / input_path.name))
         except Exception:
             pass
 
@@ -384,6 +387,7 @@ def watch_incoming(
     language: str = "en-US",
     phrase_map: Optional[list] = None,
     poll_seconds: int = 3,
+    base_dir: Optional[str] = None,
 ) -> None:
     """
     Watch the incoming/ folder continuously.
@@ -398,9 +402,10 @@ def watch_incoming(
         phrase_map:   Optional phrase map for splitting
         poll_seconds: How often to check the folder (default: 3 seconds)
     """
-    _ensure_dirs()
+    paths = VCCPaths(base_dir)
+    _ensure_dirs(paths)
     logger.info(
-        f"👁  Voice Ingestor watching: {INCOMING_DIR}\n"
+        f"👁  Voice Ingestor watching: {paths.incoming}\n"
         f"   Being: {being_name} | Language: {language}\n"
         f"   Drop any audio file in to ingest it automatically.\n"
         f"   Press Ctrl+C to stop."
@@ -410,7 +415,7 @@ def watch_incoming(
 
     while True:
         try:
-            for file_path in INCOMING_DIR.iterdir():
+            for file_path in paths.incoming.iterdir():
                 if file_path.suffix.lower() not in SUPPORTED_FORMATS:
                     continue
                 if file_path.name in processed_files:
@@ -425,6 +430,7 @@ def watch_incoming(
                     being_name=being_name,
                     language=language,
                     phrase_map=phrase_map,
+                    base_dir=base_dir,
                 )
 
                 processed_files.add(file_path.name)
@@ -467,6 +473,8 @@ if __name__ == "__main__":
     parser.add_argument("--language", default="en-US", help="BCP-47 language code")
     parser.add_argument("--watch",    action="store_true", help="Watch incoming/ folder continuously")
     parser.add_argument("--file",     help="Ingest a single specific file")
+    parser.add_argument("--base-dir", default=None,
+                        help="The VCC's base directory (default: $VCC_HOME, else this repo)")
     parser.add_argument(
         "--phrases",
         nargs="+",
@@ -481,6 +489,7 @@ if __name__ == "__main__":
             being_name=args.being,
             language=args.language,
             phrase_map=phrase_map,
+            base_dir=args.base_dir,
         )
     elif args.file:
         report = ingest_file(
@@ -488,17 +497,19 @@ if __name__ == "__main__":
             being_name=args.being,
             language=args.language,
             phrase_map=phrase_map,
+            base_dir=args.base_dir,
         )
         print(json.dumps(report, indent=2))
     else:
         # Ingest everything currently in incoming/
-        _ensure_dirs()
+        cli_paths = VCCPaths(args.base_dir)
+        _ensure_dirs(cli_paths)
         files = [
-            f for f in INCOMING_DIR.iterdir()
+            f for f in cli_paths.incoming.iterdir()
             if f.suffix.lower() in SUPPORTED_FORMATS
         ]
         if not files:
-            print(f"No audio files found in {INCOMING_DIR}")
+            print(f"No audio files found in {cli_paths.incoming}")
             print(f"Drop audio files there and run again, or use --watch mode.")
         else:
             for f in files:
@@ -508,5 +519,6 @@ if __name__ == "__main__":
                     being_name=args.being,
                     language=args.language,
                     phrase_map=phrase_map,
+                    base_dir=args.base_dir,
                 )
                 print(json.dumps(report, indent=2))

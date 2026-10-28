@@ -74,3 +74,15 @@ _archive_src/
 # Generated outputs
 funeral_outputs/
 
+
+# Runtime folders under the VCC base directory (vcc_paths) when the base is
+# this repo: what the VCC writes while it runs, not source.
+/packs/
+/inventory/
+/logs/
+/incoming/
+/processed/
+/failed/
+/studio/raw/
+/express/phrase_cache/
+/express/priority_queue/

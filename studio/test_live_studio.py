@@ -23,7 +23,6 @@ for _p in (str(_HERE), str(_HERE.parent / "engines")):
         sys.path.insert(0, _p)
 
 import live_studio as ls
-import voice_path_registrar
 from signals_for_tests import write_noise_wav, write_silent_wav, write_voiced_wav
 
 SPEAKER = "studio test"
@@ -33,7 +32,7 @@ def test_create_attach_approve_export(tmp_path):
     raw_take = write_voiced_wav(tmp_path / "raw_take.wav")
 
     export_dir = tmp_path / "approved_exports"
-    studio = ls.LiveStudio(export_dir=export_dir)
+    studio = ls.LiveStudio(export_dir=export_dir, base_dir=tmp_path)
 
     # create
     session = studio.create_session("I love you", speaker=SPEAKER)
@@ -69,7 +68,7 @@ def test_create_attach_approve_export(tmp_path):
 def test_silent_take_is_refused(tmp_path):
     """A WAV of pure silence must never validate, approve or export, whatever the transcript says."""
     raw_take = write_silent_wav(tmp_path / "silence.wav", seconds=1.0)
-    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("I love you", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw_take))
 
@@ -94,7 +93,7 @@ def test_silent_take_is_refused(tmp_path):
 def test_unvoiced_noise_take_is_refused(tmp_path):
     """Loud noise with no voice in it is refused too: loudness alone is not speech."""
     raw_take = write_noise_wav(tmp_path / "noise.wav")
-    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("Help is coming", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="Help is coming")
@@ -104,7 +103,7 @@ def test_unvoiced_noise_take_is_refused(tmp_path):
 
 def test_too_short_take_is_refused(tmp_path):
     raw_take = write_voiced_wav(tmp_path / "short.wav", seconds=0.2)
-    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("Yes", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="Yes")
@@ -112,15 +111,13 @@ def test_too_short_take_is_refused(tmp_path):
     assert any("under" in r for r in session.validation_reasons), session.validation_reasons
 
 
-def test_export_registers_into_index(tmp_path, monkeypatch):
-    """Export with register=True writes into the (temp) express index."""
+def test_export_registers_into_index(tmp_path):
+    """Export with register=True writes into the express index under the studio's base_dir (a temp folder)."""
     raw_take = write_voiced_wav(tmp_path / "raw.wav")
 
-    temp_index = tmp_path / "express_index.json"
-    monkeypatch.setattr(voice_path_registrar, "EXPRESS_INDEX", temp_index)
-    monkeypatch.setattr(voice_path_registrar, "EXPRESS_ROOT", tmp_path)
+    temp_index = tmp_path / "express" / "express_index.json"
 
-    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("You are safe", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="You are safe")
@@ -135,7 +132,7 @@ def test_export_registers_into_index(tmp_path, monkeypatch):
 
 def test_cannot_approve_without_passing_validation(tmp_path):
     raw_take = write_voiced_wav(tmp_path / "r.wav")
-    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     session = studio.create_session("hi", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="kill yourself")  # blocked by validator
@@ -155,7 +152,7 @@ def test_capture_without_an_input_device_refuses_and_records_nothing(tmp_path):
     audio library is taken away for this test, so no microphone can open
     even on a machine that has one.
     """
-    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    studio = ls.LiveStudio(export_dir=tmp_path / "out", base_dir=tmp_path)
     studio._recorder._sd = None
     session = studio.create_session("hello", speaker=SPEAKER)
     for duration in (None, 1.0):

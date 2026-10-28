@@ -22,19 +22,27 @@ from typing import Optional
 
 logger = logging.getLogger("christman.voice_logger")
 
-LOG_DIR = Path(__file__).parent.parent / "logs"
-AUDIT_LOG = LOG_DIR / "voice_audit.jsonl"
-SAFETY_LOG = LOG_DIR / "voice_safety.jsonl"
-HEALTH_LOG = LOG_DIR / "voice_health.jsonl"
+import sys as _sys
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in _sys.path:
+    _sys.path.insert(0, _REPO_ROOT)
+from vcc_paths import VCCPaths  # one base directory for the whole VCC
+
+# Log files, under the VCC's one base directory (vcc_paths): logs/<name>.
+AUDIT_LOG = "voice_audit.jsonl"
+SAFETY_LOG = "voice_safety.jsonl"
+HEALTH_LOG = "voice_health.jsonl"
 
 
-def _ensure_log_dir():
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+def log_path(name: str, base_dir: Optional[str] = None) -> Path:
+    """The full path of log `name` under base_dir, else $VCC_HOME, else this repo."""
+    return VCCPaths(base_dir).logs / name
 
 
-def _write_event(log_file: Path, event: dict) -> None:
+def _write_event(log_name: str, event: dict, base_dir: Optional[str] = None) -> None:
     """Append a single event to a JSONL log file."""
-    _ensure_log_dir()
+    log_file = log_path(log_name, base_dir)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
     try:
         with open(log_file, "a", encoding="utf-8") as f:
@@ -50,7 +58,8 @@ def log_synthesis(
     text_length: int,
     duration_seconds: float,
     success: bool,
-    error: Optional[str] = None
+    error: Optional[str] = None,
+    base_dir: Optional[str] = None,
 ) -> None:
     """
     Log a synthesis request.
@@ -66,14 +75,15 @@ def log_synthesis(
         "duration_seconds": round(duration_seconds, 3),
         "success": success,
         "error": error,
-    })
+    }, base_dir)
 
 
 def log_pack_refresh(
     pack_id: str,
     old_quality: float,
     new_quality: float,
-    refresh_count: int
+    refresh_count: int,
+    base_dir: Optional[str] = None,
 ) -> None:
     """Log a pack refresh event — called by the registry."""
     _write_event(HEALTH_LOG, {
@@ -82,13 +92,14 @@ def log_pack_refresh(
         "old_quality": old_quality,
         "new_quality": new_quality,
         "refresh_count": refresh_count,
-    })
+    }, base_dir)
 
 
 def log_degradation_detected(
     pack_id: str,
     quality_score: float,
-    threshold: float
+    threshold: float,
+    base_dir: Optional[str] = None,
 ) -> None:
     """Log when a pack drops below the degradation threshold."""
     _write_event(HEALTH_LOG, {
@@ -96,7 +107,7 @@ def log_degradation_detected(
         "pack_id": pack_id,
         "quality_score": quality_score,
         "threshold": threshold,
-    })
+    }, base_dir)
 
 
 def log_language_learn(
@@ -104,7 +115,8 @@ def log_language_learn(
     source_pack_id: str,
     target_language: str,
     new_pack_id: str,
-    success: bool
+    success: bool,
+    base_dir: Optional[str] = None,
 ) -> None:
     """Log a language learning event."""
     _write_event(AUDIT_LOG, {
@@ -114,14 +126,15 @@ def log_language_learn(
         "target_language": target_language,
         "new_pack_id": new_pack_id,
         "success": success,
-    })
+    }, base_dir)
 
 
 def log_safety_event(
     event_type: str,
     pack_id: str,
     being_name: str,
-    reason: str
+    reason: str,
+    base_dir: Optional[str] = None,
 ) -> None:
     """
     Log a safety gate trigger.
@@ -134,17 +147,18 @@ def log_safety_event(
         "pack_id": pack_id,
         "being_name": being_name,
         "reason": reason,
-    })
+    }, base_dir)
     logger.warning(
         f"SAFETY EVENT [{event_type}] | being={being_name} | pack={pack_id} | reason={reason}"
     )
 
 
-def get_recent_events(log_file: Path, n: int = 50) -> list[dict]:
+def get_recent_events(log_name: str, n: int = 50, base_dir: Optional[str] = None) -> list[dict]:
     """
     Read the last N events from a log file.
     Used by the Brockston admin dashboard.
     """
+    log_file = log_path(log_name, base_dir)
     if not log_file.exists():
         return []
     try:
@@ -157,13 +171,13 @@ def get_recent_events(log_file: Path, n: int = 50) -> list[dict]:
         return []
 
 
-def get_recent_synthesis_events(n: int = 50) -> list[dict]:
-    return get_recent_events(AUDIT_LOG, n)
+def get_recent_synthesis_events(n: int = 50, base_dir: Optional[str] = None) -> list[dict]:
+    return get_recent_events(AUDIT_LOG, n, base_dir)
 
 
-def get_recent_safety_events(n: int = 50) -> list[dict]:
-    return get_recent_events(SAFETY_LOG, n)
+def get_recent_safety_events(n: int = 50, base_dir: Optional[str] = None) -> list[dict]:
+    return get_recent_events(SAFETY_LOG, n, base_dir)
 
 
-def get_recent_health_events(n: int = 50) -> list[dict]:
-    return get_recent_events(HEALTH_LOG, n)
+def get_recent_health_events(n: int = 50, base_dir: Optional[str] = None) -> list[dict]:
+    return get_recent_events(HEALTH_LOG, n, base_dir)

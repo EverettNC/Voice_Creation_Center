@@ -47,11 +47,11 @@ from typing import Optional
 
 logger = logging.getLogger("christman.voice_express")
 
-# Internal paths — all express assets live inside the center
-EXPRESS_ROOT    = Path(__file__).parent.parent / "express"
-PHRASE_CACHE    = EXPRESS_ROOT / "phrase_cache"
-PRIORITY_QUEUE  = EXPRESS_ROOT / "priority_queue"
-EXPRESS_INDEX   = EXPRESS_ROOT / "express_index.json"
+# Internal paths — all express assets live inside the center. They come from
+# vcc_paths: the base_dir passed to VoiceExpress, else $VCC_HOME, else this
+# repo. (They used to be Path(__file__).parent.parent / "express", which from
+# the repo root is the folder ABOVE the repo.)
+from vcc_paths import VCCPaths
 
 # Performance targets
 EXPRESS_TARGET_MS  = 50    # Pre-rendered: serve in under 50ms
@@ -160,15 +160,16 @@ class VoiceExpress:
         )
     """
 
-    def __init__(self):
+    def __init__(self, base_dir: Optional[str] = None):
+        self.paths = VCCPaths(base_dir)
         self._phrases: dict[str, ExpressPhrase] = {}
         self._priority_queue: list[PriorityRequest] = []
         self._stats = defaultdict(int)
         self._loaded = False
 
         # Ensure internal directories exist
-        PHRASE_CACHE.mkdir(parents=True, exist_ok=True)
-        PRIORITY_QUEUE.mkdir(parents=True, exist_ok=True)
+        self.paths.phrase_cache.mkdir(parents=True, exist_ok=True)
+        self.paths.priority_queue.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------------------------------------
     # Load & Save
@@ -176,14 +177,14 @@ class VoiceExpress:
 
     def load(self) -> bool:
         """Load the express index from disk."""
-        if not EXPRESS_INDEX.exists():
+        if not self.paths.express_index.exists():
             logger.info("No express index found — starting fresh.")
             self._loaded = True
             self._save()
             return True
 
         try:
-            with open(EXPRESS_INDEX, "r", encoding="utf-8") as f:
+            with open(self.paths.express_index, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             for phrase_data in data.get("phrases", []):
@@ -214,7 +215,7 @@ class VoiceExpress:
                 },
                 "phrases": [p.to_dict() for p in self._phrases.values()],
             }
-            with open(EXPRESS_INDEX, "w", encoding="utf-8") as f:
+            with open(self.paths.express_index, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"Express save failed: {e}", exc_info=True)
