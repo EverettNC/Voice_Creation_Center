@@ -10,7 +10,7 @@ PURPOSE:
     Path Registration Utility for the Christman Voice Creation Center.
 
     The WAV files don't move. They stay exactly where they live —
-    in Derek's folder, AlphaVox's folder, Giuseppe's folder, Sierra's.
+    in each being's own folder.
 
     This utility scans a being's audio directory, reads every WAV file,
     and registers its path into the express index. No copying.
@@ -19,16 +19,26 @@ PURPOSE:
 
     One command. Every WAV file in that folder is live.
 
+    It is also how the express index is built: the index ships empty, and
+    each being registers its own audio with this command.
+
 CARDINAL RULE 13: Files are registered only if they actually exist.
     No phantom entries. No broken references.
+
+WHAT CHANGED AND WHY (2026-10-28)
+    A file that could not be read was registered anyway, with a duration of
+    0.0 and a sample rate of 22050 Hz that nobody measured, and every entry
+    carried a quality_score of 1.0 that nobody measured either. Entries are
+    now written by voice_express.register_phrase, the one writer: duration
+    and sample rate are read from the file, an unreadable or empty file is
+    refused and listed in the report, and no quality is recorded. When the
+    text comes from a file's name (no text map given), the entry says so
+    (text_from "filename").
 ================================================================================
 """
 
-import hashlib
 import json
 import logging
-import os
-import wave
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -40,37 +50,12 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in _sys.path:
     _sys.path.insert(0, _REPO_ROOT)
 from vcc_paths import VCCPaths  # one base directory for the whole VCC
-
-
-def _get_wav_duration(wav_path: Path) -> float:
-    """
-    Read the actual duration of a WAV file in seconds.
-    Returns 0.0 if file is unreadable — never crashes.
-    """
-    try:
-        with wave.open(str(wav_path), 'rb') as w:
-            frames = w.getnframes()
-            rate = w.getframerate()
-            return round(frames / float(rate), 3)
-    except Exception as e:
-        logger.warning(f"Could not read WAV duration for {wav_path}: {e}")
-        return 0.0
-
-
-def _get_wav_sample_rate(wav_path: Path) -> int:
-    """Read the sample rate of a WAV file."""
-    try:
-        with wave.open(str(wav_path), 'rb') as w:
-            return w.getframerate()
-    except Exception as e:
-        logger.warning(f"Could not read sample rate for {wav_path}: {e}")
-        return 22050
+import voice_express  # the one writer of express index entries
 
 
 def _make_phrase_id(text: str, being_name: str, language: str) -> str:
-    """Generate a stable unique ID for a phrase."""
-    raw = f"{being_name.lower()}::{language.lower()}::{text.strip().lower()}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    """Generate a stable unique ID for a phrase (voice_express.make_phrase_id)."""
+    return voice_express.make_phrase_id(text, being_name, language)
 
 
 def _infer_text_from_filename(filename: str) -> str:
@@ -87,47 +72,17 @@ def _infer_text_from_filename(filename: str) -> str:
     return stem.replace("_", " ").replace("-", " ").strip()
 
 
-def _load_index(base_dir: Optional[str] = None) -> dict:
-    """Load the current express index from disk."""
-    paths = VCCPaths(base_dir)
-    paths.express.mkdir(parents=True, exist_ok=True)
-
-    if not paths.express_index.exists():
-        return {
-            "meta": {
-                "version": "1.0.0",
-                "project": "Christman Voice Creation Center",
-                "patent_pending": "TCAP-2026-001 | TCAP-2026-002",
-            },
-            "phrases": []
-        }
-
-    try:
-        with open(paths.express_index, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load express index: {e}")
-        return {"meta": {}, "phrases": []}
-
-
-def _save_index(index: dict, base_dir: Optional[str] = None) -> None:
-    """Save the express index to disk."""
-    index["meta"]["last_updated"] = datetime.now(timezone.utc).isoformat()
-    index["meta"]["total_phrases"] = len(index.get("phrases", []))
-
-    try:
-        with open(VCCPaths(base_dir).express_index, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2)
-        logger.info(f"Express index saved — {index['meta']['total_phrases']} phrases.")
-    except Exception as e:
-        logger.error(f"Failed to save express index: {e}")
+def _open_express(base_dir: Optional[str]) -> voice_express.VoiceExpress:
+    express = voice_express.VoiceExpress(base_dir=base_dir)
+    if not express.load():
+        raise RuntimeError(f"express index could not be loaded: {express.index_path}")
+    return express
 
 
 def register_audio_folder(
     folder_path: str,
     being_name: str,
     language: str = "en-US",
-    quality_score: float = 1.0,
     text_map: Optional[dict] = None,
     dry_run: bool = False,
     base_dir: Optional[str] = None,
@@ -138,18 +93,19 @@ def register_audio_folder(
 
     Args:
         folder_path:   Path to the being's audio folder.
-        being_name:    Name of the being (e.g., 'AlphaVox', 'Derek').
+        being_name:    Name of the being the audio belongs to.
         language:      BCP-47 language code (default: 'en-US').
-        quality_score: Initial quality score for all registered phrases.
         text_map:      Optional dict mapping filename → phrase text.
-                       If not provided, text is inferred from filename.
+                       If not provided, text is inferred from filename,
+                       and each entry records text_from "filename".
                        Example: {"i_love_you.wav": "I love you"}
-        dry_run:       If True, scans and reports without writing anything.
+        dry_run:       If True, scans, measures and reports without writing anything.
+        base_dir:      The VCC base directory (vcc_paths).
 
     Returns:
         Registration report dict with counts and any errors.
     """
-    folder = Path(folder_path)
+    folder = Path(folder_path).expanduser()
 
     if not folder.exists():
         logger.error(f"Folder not found: {folder_path}")
@@ -162,7 +118,7 @@ def register_audio_folder(
         }
 
     # Find all WAV files
-    wav_files = list(folder.glob("*.wav")) + list(folder.glob("*.WAV"))
+    wav_files = sorted(set(folder.glob("*.wav")) | set(folder.glob("*.WAV")))
 
     if not wav_files:
         logger.warning(f"No WAV files found in {folder_path}")
@@ -179,74 +135,45 @@ def register_audio_folder(
         f"[{language}] in {folder_path}"
     )
 
-    index = _load_index(base_dir)
-    existing_ids = {p["phrase_id"] for p in index.get("phrases", [])}
-
+    express = _open_express(base_dir)
     registered = 0
     skipped = 0
     errors = []
-    new_phrases = []
 
-    for wav_file in sorted(wav_files):
+    for wav_file in wav_files:
+        if text_map and wav_file.name in text_map:
+            text, text_from = text_map[wav_file.name], "given"
+        else:
+            text, text_from = _infer_text_from_filename(wav_file.name), "filename"
+
+        if not text:
+            logger.warning(f"Could not determine text for {wav_file.name} — skipping.")
+            skipped += 1
+            continue
+
+        if express.is_cached(text, being_name, language):
+            logger.debug(f"Already registered: '{text}' for {being_name} — skipping.")
+            skipped += 1
+            continue
+
         try:
-            # Get phrase text
-            if text_map and wav_file.name in text_map:
-                text = text_map[wav_file.name]
-            else:
-                text = _infer_text_from_filename(wav_file.name)
-
-            if not text:
-                logger.warning(f"Could not determine text for {wav_file.name} — skipping.")
-                skipped += 1
-                continue
-
-            phrase_id = _make_phrase_id(text, being_name, language)
-
-            # Skip if already registered
-            if phrase_id in existing_ids:
-                logger.debug(f"Already registered: '{text}' for {being_name} — skipping.")
-                skipped += 1
-                continue
-
-            # Read WAV metadata
-            duration = _get_wav_duration(wav_file)
-            sample_rate = _get_wav_sample_rate(wav_file)
-
-            phrase_entry = {
-                "phrase_id": phrase_id,
-                "being_name": being_name,
-                "language": language,
-                "text": text,
-                "audio_path": str(wav_file.absolute()),
-                "duration_seconds": duration,
-                "sample_rate": sample_rate,
-                "quality_score": quality_score,
-                "serve_count": 0,
-                "last_served_at": None,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "source": "path_registrar",
-                "original_filename": wav_file.name,
-            }
-
-            new_phrases.append(phrase_entry)
-            existing_ids.add(phrase_id)
+            duration, sample_rate = voice_express.measure_wav(wav_file)
+            if not dry_run:
+                express.register_phrase(
+                    text=text, being_name=being_name, language=language,
+                    audio_path=str(wav_file), source="path_registrar",
+                    text_from=text_from, original_filename=wav_file.name,
+                )
             registered += 1
-
             logger.info(
                 f"{'[DRY RUN] ' if dry_run else ''}"
                 f"Registered: '{text}' → {wav_file.name} "
                 f"({duration:.2f}s, {sample_rate}Hz)"
             )
-
-        except Exception as e:
-            error_msg = f"Error processing {wav_file.name}: {e}"
+        except voice_express.UnmeasurableAudio as e:
+            error_msg = f"Not registered, {wav_file.name}: {e}"
             logger.error(error_msg)
             errors.append(error_msg)
-
-    # Write to index unless dry run
-    if not dry_run and new_phrases:
-        index.setdefault("phrases", []).extend(new_phrases)
-        _save_index(index, base_dir)
 
     report = {
         "success": True,
@@ -273,35 +200,35 @@ def register_single_file(
     being_name: str,
     language: str,
     text: str,
-    quality_score: float = 1.0,
     base_dir: Optional[str] = None,
+    source: str = "path_registrar",
 ) -> dict:
     """
     Register a single WAV file into the express index.
     Use this when you want precise control over the phrase text.
 
     Args:
-        wav_path:      Absolute path to the WAV file.
+        wav_path:      Path to the WAV file.
         being_name:    Name of the being.
         language:      BCP-47 language code.
         text:          Exact phrase text this audio represents.
-        quality_score: Initial quality score.
+        base_dir:      The VCC base directory (vcc_paths).
+        source:        Where the audio came from (voice_express.SOURCES);
+                       the studio passes "studio_export".
 
     Returns:
         Registration result dict.
     """
-    wav = Path(wav_path)
+    wav = Path(wav_path).expanduser()
 
     if not wav.exists():
         logger.error(f"WAV file not found: {wav_path}")
         return {"success": False, "error": f"File not found: {wav_path}"}
 
-    index = _load_index(base_dir)
-    existing_ids = {p["phrase_id"] for p in index.get("phrases", [])}
-
+    express = _open_express(base_dir)
     phrase_id = _make_phrase_id(text, being_name, language)
 
-    if phrase_id in existing_ids:
+    if express.is_cached(text, being_name, language):
         logger.info(f"Phrase already registered: '{text}' for {being_name}")
         return {
             "success": True,
@@ -310,27 +237,14 @@ def register_single_file(
             "phrase_id": phrase_id
         }
 
-    duration    = _get_wav_duration(wav)
-    sample_rate = _get_wav_sample_rate(wav)
-
-    phrase_entry = {
-        "phrase_id": phrase_id,
-        "being_name": being_name,
-        "language": language,
-        "text": text,
-        "audio_path": str(wav.absolute()),
-        "duration_seconds": duration,
-        "sample_rate": sample_rate,
-        "quality_score": quality_score,
-        "serve_count": 0,
-        "last_served_at": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "source": "manual_registration",
-        "original_filename": wav.name,
-    }
-
-    index.setdefault("phrases", []).append(phrase_entry)
-    _save_index(index, base_dir)
+    try:
+        phrase = express.register_phrase(
+            text=text, being_name=being_name, language=language,
+            audio_path=str(wav), source=source, original_filename=wav.name,
+        )
+    except voice_express.UnmeasurableAudio as e:
+        logger.error(f"Not registered: {e}")
+        return {"success": False, "error": str(e)}
 
     logger.info(
         f"Single file registered: '{text}' → {wav.name} "
@@ -339,9 +253,9 @@ def register_single_file(
     return {
         "success": True,
         "registered": True,
-        "phrase_id": phrase_id,
-        "duration_seconds": duration,
-        "sample_rate": sample_rate,
+        "phrase_id": phrase.phrase_id,
+        "duration_seconds": phrase.duration_seconds,
+        "sample_rate": phrase.sample_rate,
     }
 
 
@@ -350,28 +264,33 @@ def show_index_report(base_dir: Optional[str] = None) -> None:
     Print a human-readable report of everything in the express index.
     Run this from the terminal to see what's registered.
     """
-    index = _load_index(base_dir)
-    phrases = index.get("phrases", [])
+    express = _open_express(base_dir)
+    phrases = [p for being in sorted({p.being_name for p in express._phrases.values()})
+               for p in express.get_phrases_for_being(being)]
 
     print("\n" + "="*60)
     print("  CHRISTMAN VOICE CENTER — EXPRESS INDEX REPORT")
     print("="*60)
+    print(f"  Index: {express.index_path}")
     print(f"  Total phrases registered: {len(phrases)}")
-    print(f"  Last updated: {index.get('meta', {}).get('last_updated', 'unknown')}")
+    print(f"  Entries left out (file missing or changed): {len(express.load_problems)}")
     print("="*60)
 
     by_being = {}
     for p in phrases:
-        by_being.setdefault(p["being_name"], []).append(p)
+        by_being.setdefault(p.being_name, []).append(p)
 
     for being, being_phrases in sorted(by_being.items()):
         print(f"\n  {being} ({len(being_phrases)} phrases)")
         for p in being_phrases:
             print(
-                f"    [{p['language']}] '{p['text']}' "
-                f"→ {Path(p['audio_path']).name} "
-                f"({p['duration_seconds']}s)"
+                f"    [{p.language}] '{p.text}' "
+                f"→ {Path(p.audio_path).name} "
+                f"({p.duration_seconds}s, {p.sample_rate} Hz, {p.source}"
+                f"{', text from filename' if p.text_from == 'filename' else ''})"
             )
+    for problem in express.load_problems:
+        print(f"\n  LEFT OUT: {problem}")
 
     print("\n" + "="*60 + "\n")
 
@@ -384,7 +303,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Christman Voice Center — Path Registrar"
+        description="Christman Voice Center — Path Registrar (builds the express index)"
     )
     parser.add_argument("--base-dir", default=None,
                         help="The VCC's base directory (default: $VCC_HOME, else this repo)")
@@ -393,18 +312,18 @@ if __name__ == "__main__":
     # Register a folder
     folder_cmd = subparsers.add_parser("folder", help="Register all WAV files in a folder")
     folder_cmd.add_argument("folder", help="Path to audio folder")
-    folder_cmd.add_argument("being", help="Being name (e.g. AlphaVox)")
+    folder_cmd.add_argument("being", help="Name of the being the audio belongs to")
     folder_cmd.add_argument("--language", default="en-US", help="BCP-47 language code")
-    folder_cmd.add_argument("--quality", type=float, default=1.0)
+    folder_cmd.add_argument("--text-map", default=None,
+                            help="JSON file mapping filename to the exact phrase text")
     folder_cmd.add_argument("--dry-run", action="store_true")
 
     # Register a single file
     file_cmd = subparsers.add_parser("file", help="Register a single WAV file")
     file_cmd.add_argument("wav_path", help="Path to WAV file")
-    file_cmd.add_argument("being", help="Being name")
+    file_cmd.add_argument("being", help="Name of the being the audio belongs to")
     file_cmd.add_argument("text", help="Phrase text")
     file_cmd.add_argument("--language", default="en-US")
-    file_cmd.add_argument("--quality", type=float, default=1.0)
 
     # Show report
     subparsers.add_parser("report", help="Show full index report")
@@ -414,11 +333,12 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     if args.command == "folder":
+        text_map = json.loads(Path(args.text_map).read_text(encoding="utf-8")) if args.text_map else None
         result = register_audio_folder(
             folder_path=args.folder,
             being_name=args.being,
             language=args.language,
-            quality_score=args.quality,
+            text_map=text_map,
             dry_run=args.dry_run,
             base_dir=args.base_dir,
         )
@@ -430,7 +350,6 @@ if __name__ == "__main__":
             being_name=args.being,
             language=args.language,
             text=args.text,
-            quality_score=args.quality,
             base_dir=args.base_dir,
         )
         print(json.dumps(result, indent=2))

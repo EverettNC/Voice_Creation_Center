@@ -92,7 +92,7 @@ def test_ingestor_writes_under_its_base(tmp_path):
     paths.incoming.mkdir(parents=True)
     wav = write_voiced_wav(paths.incoming / "take.wav")
 
-    report = voice_ingestor.ingest_file(wav, being_name="being one", base_dir=str(base))
+    report = voice_ingestor.ingest_file(wav, being_name="being one", phrase_map=["hello"], base_dir=str(base))
     assert report["success"], report
     assert (paths.processed / "take.wav").exists()
     index = json.loads(paths.express_index.read_text())
