@@ -505,6 +505,7 @@ class LiveStudio:
                     language=session.language,
                     text=session.target_phrase,
                     base_dir=str(self.paths.base),
+                    source="studio_export",
                 )
                 logger.info(
                     "Session %s — express index registration: %s", session_id, result

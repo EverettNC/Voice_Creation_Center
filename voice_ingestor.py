@@ -33,7 +33,6 @@ CARDINAL RULE 13: No fake ingestion. No phantom registrations.
 """
 
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -52,6 +51,7 @@ logger = logging.getLogger("christman.voice_ingestor")
 # Path(__file__).parent.parent, which from the repo root is the folder ABOVE
 # the repo.)
 from vcc_paths import VCCPaths
+import voice_express  # the one writer of express index entries
 
 # Silence detection defaults
 SILENCE_THRESH_DB  = -40    # dB — anything quieter than this is silence
@@ -73,38 +73,8 @@ def _ensure_dirs(paths: VCCPaths) -> None:
 
 
 def _make_phrase_id(text: str, being_name: str, language: str) -> str:
-    """Generate a stable unique ID for a phrase."""
-    raw = f"{being_name.lower()}::{language.lower()}::{text.strip().lower()}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def _infer_text_from_filename(filename: str) -> str:
-    """Infer phrase text from filename."""
-    stem = Path(filename).stem
-    return stem.replace("_", " ").replace("-", " ").strip()
-
-
-def _load_express_index(paths: VCCPaths) -> dict:
-    """Load the express index."""
-    if not paths.express_index.exists():
-        return {"meta": {}, "phrases": []}
-    try:
-        with open(paths.express_index, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load express index: {e}")
-        return {"meta": {}, "phrases": []}
-
-
-def _save_express_index(index: dict, paths: VCCPaths) -> None:
-    """Save the express index."""
-    index["meta"]["last_updated"] = datetime.now(timezone.utc).isoformat()
-    index["meta"]["total_phrases"] = len(index.get("phrases", []))
-    try:
-        with open(paths.express_index, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2)
-    except Exception as e:
-        logger.error(f"Failed to save express index: {e}")
+    """Generate a stable unique ID for a phrase (voice_express.make_phrase_id)."""
+    return voice_express.make_phrase_id(text, being_name, language)
 
 
 # ── Conversion ────────────────────────────────────────────────────────────────
@@ -112,8 +82,9 @@ def _save_express_index(index: dict, paths: VCCPaths) -> None:
 def convert_to_wav(input_path: Path, output_path: Path) -> bool:
     """
     Convert any supported audio format to WAV.
-    Uses pydub — falls back to ffmpeg directly if pydub unavailable.
-    Returns True if successful.
+    Uses pydub, which runs the ffmpeg program for any input that is not
+    already WAV. Without pydub it returns False and says so; there is no
+    other converter. Returns True if successful.
     """
     try:
         from pydub import AudioSegment
@@ -146,11 +117,14 @@ def split_on_silence(
     wav_path: Path,
     being_name: str,
     output_dir: Path,
-    phrase_map: Optional[dict] = None,
+    phrase_map: Optional[list] = None,
+    language: str = "en-US",
 ) -> list[dict]:
     """
     Split a WAV file on silence into individual phrase files.
-    Returns a list of phrase dicts ready for express index registration.
+    Returns one dict per phrase file written: its path, its duration and
+    sample rate as read back from the written file, and its text when the
+    phrase map gives one (None otherwise).
 
     Args:
         wav_path:    Path to the WAV file to split
@@ -158,20 +132,31 @@ def split_on_silence(
         output_dir:  Directory to write phrase WAV files
         phrase_map:  Optional ordered list of phrase texts matching the splits
                      e.g. ["I love you", "I need help", "Yes", "No"]
-                     If not provided, filenames are auto-generated.
+                     Without it the chunks are written with numbered names
+                     and their text is unknown (None): a number is not what
+                     was said.
+        language:    BCP-47 language code of the speech
+
+    WHAT CHANGED AND WHY (2026-10-28): the language was hard-coded "en-US"
+    whatever the caller passed; the sample rate was written as 22050 without
+    reading the file (a 44100 Hz WAV was recorded as 22050); the quality was
+    written as 1.0 without measuring anything; and without a phrase map the
+    text of record became "phrase_001". Now the language is the caller's,
+    the rate and duration are read from each written file, no quality is
+    recorded, and an unknown text stays unknown.
     """
     try:
         from pydub import AudioSegment
         from pydub.silence import split_on_silence as pydub_split
     except ImportError:
-        logger.error("pydub not installed. Run: pip install pydub")
+        logger.error("pydub not installed. Run: pip install -r requirements.txt")
         return []
 
     try:
         audio = AudioSegment.from_wav(str(wav_path))
         logger.info(
             f"Splitting {wav_path.name} — "
-            f"duration: {len(audio)/1000:.1f}s, "
+            f"duration: {len(audio)/1000:.1f}s, {audio.frame_rate} Hz, "
             f"silence threshold: {SILENCE_THRESH_DB}dB"
         )
 
@@ -194,46 +179,39 @@ def split_on_silence(
         )
 
         output_dir.mkdir(parents=True, exist_ok=True)
+        stem = "".join(c.lower() if c.isalnum() else "_" for c in being_name).strip("_") or "being"
         phrases = []
 
         for i, chunk in enumerate(valid_chunks):
             # Determine phrase text
             if phrase_map and i < len(phrase_map):
                 text = phrase_map[i]
-                safe_name = text.lower().replace(" ", "_").replace("'", "")[:40]
+                safe_name = "".join(c.lower() if c.isalnum() else "_" for c in text).strip("_")[:40]
             else:
-                text = f"phrase_{i+1:03d}"
-                safe_name = text
+                text = None
+                safe_name = f"{wav_path.stem}_chunk_{i+1:03d}"
 
-            filename   = f"{being_name.lower()}_{safe_name}.wav"
+            filename   = f"{stem}_{safe_name}.wav"
             chunk_path = output_dir / filename
 
             # Normalize volume
             chunk = chunk.normalize()
             chunk.export(str(chunk_path), format="wav")
-
-            phrase_id = _make_phrase_id(text, being_name, "en-US")
-            duration  = len(chunk) / 1000.0
+            duration, sample_rate = voice_express.measure_wav(chunk_path)
 
             phrases.append({
-                "phrase_id":        phrase_id,
-                "being_name":       being_name,
-                "language":         "en-US",
-                "text":             text,
-                "audio_path":       str(chunk_path.absolute()),
-                "duration_seconds": round(duration, 3),
-                "sample_rate":      22050,
-                "quality_score":    1.0,
-                "serve_count":      0,
-                "last_served_at":   None,
-                "created_at":       datetime.now(timezone.utc).isoformat(),
-                "source":           "voice_ingestor",
+                "being_name":        being_name,
+                "language":          language,
+                "text":              text,
+                "audio_path":        str(chunk_path.resolve()),
+                "duration_seconds":  duration,
+                "sample_rate":       sample_rate,
                 "original_filename": wav_path.name,
             })
 
             logger.info(
-                f"  [{i+1}/{len(valid_chunks)}] '{text}' → "
-                f"{filename} ({duration:.2f}s)"
+                f"  [{i+1}/{len(valid_chunks)}] {text!r} → "
+                f"{filename} ({duration:.2f}s, {sample_rate} Hz)"
             )
 
         return phrases
@@ -247,30 +225,39 @@ def split_on_silence(
 
 def register_phrases(phrases: list[dict], base_dir: Optional[str] = None) -> int:
     """
-    Register a list of phrases into the express index.
-    Skips duplicates. Returns count of newly registered phrases.
+    Register phrase files into the express index through
+    voice_express.register_phrase (which reads each file's duration and
+    sample rate itself). A phrase whose text is unknown is not registered:
+    the index holds what is said in each file, and nobody said it.
+    Skips phrases already registered. Returns count of newly registered phrases.
     """
     if not phrases:
         return 0
+    express = voice_express.VoiceExpress(base_dir=base_dir)
+    if not express.load():
+        raise RuntimeError(f"express index could not be loaded: {express.index_path}")
 
-    paths = VCCPaths(base_dir)
-    index = _load_express_index(paths)
-    existing_ids = {p["phrase_id"] for p in index.get("phrases", [])}
-
-    new_phrases = []
+    count = 0
     for phrase in phrases:
-        if phrase["phrase_id"] in existing_ids:
+        if not phrase.get("text"):
+            logger.info(f"Not registered (its text is unknown): {phrase['audio_path']}")
+            continue
+        if express.is_cached(phrase["text"], phrase["being_name"], phrase["language"]):
             logger.debug(f"Already registered: '{phrase['text']}' — skipping.")
             continue
-        new_phrases.append(phrase)
-        existing_ids.add(phrase["phrase_id"])
+        express.register_phrase(
+            text=phrase["text"],
+            being_name=phrase["being_name"],
+            language=phrase["language"],
+            audio_path=phrase["audio_path"],
+            source="voice_ingestor",
+            original_filename=phrase.get("original_filename"),
+        )
+        count += 1
 
-    if new_phrases:
-        index.setdefault("phrases", []).extend(new_phrases)
-        _save_express_index(index, paths)
-        logger.info(f"Registered {len(new_phrases)} new phrases into express index.")
-
-    return len(new_phrases)
+    if count:
+        logger.info(f"Registered {count} new phrases into express index.")
+    return count
 
 
 # ── Main ingestion pipeline ───────────────────────────────────────────────────
@@ -306,6 +293,7 @@ def ingest_file(
         "converted":   False,
         "phrases":     0,
         "registered":  0,
+        "unregistered_text_unknown": [],
         "errors":      [],
         "timestamp":   datetime.now(timezone.utc).isoformat(),
     }
@@ -335,12 +323,15 @@ def ingest_file(
             wav_path = input_path
 
         # Step 2 — Split on silence
-        output_dir = paths.ingested_phrases / being_name.lower()
+        output_dir = paths.ingested_phrases / (
+            "".join(c.lower() if c.isalnum() else "_" for c in being_name).strip("_") or "being"
+        )
         phrases = split_on_silence(
             wav_path=wav_path,
             being_name=being_name,
             output_dir=output_dir,
             phrase_map=phrase_map,
+            language=language,
         )
 
         if not phrases:
@@ -352,6 +343,21 @@ def ingest_file(
             return report
 
         report["phrases"] = len(phrases)
+
+        # A phrase map must line up one text per phrase. If the file split
+        # into a different number of phrases, no text can be trusted to sit
+        # on the right audio, so none is registered.
+        if phrase_map and len(phrase_map) != len(phrases):
+            report["errors"].append(
+                f"The phrase map has {len(phrase_map)} texts but the file split into "
+                f"{len(phrases)} phrases; nothing was registered, because the texts "
+                f"cannot be matched to the audio. Phrase files written: "
+                f"{[p['audio_path'] for p in phrases]}"
+            )
+            shutil.move(str(input_path), str(paths.failed / input_path.name))
+            return report
+
+        report["unregistered_text_unknown"] = [p["audio_path"] for p in phrases if not p["text"]]
 
         # Step 3 — Register into express index
         registered = register_phrases(phrases, base_dir)
@@ -374,8 +380,9 @@ def ingest_file(
         report["errors"].append(str(e))
         try:
             shutil.move(str(input_path), str(paths.failed / input_path.name))
-        except Exception:
-            pass
+        except Exception as move_error:
+            report["errors"].append(f"and it could not be moved to failed/: {move_error}")
+            logger.error(f"Could not move {input_path.name} to failed/: {move_error}")
 
     return report
 
@@ -411,6 +418,8 @@ def watch_incoming(
         f"   Press Ctrl+C to stop."
     )
 
+    # A file is remembered by name, size and modification time, so a new
+    # file dropped in later under the same name is still ingested.
     processed_files: set = set()
 
     while True:
@@ -418,7 +427,12 @@ def watch_incoming(
             for file_path in paths.incoming.iterdir():
                 if file_path.suffix.lower() not in SUPPORTED_FORMATS:
                     continue
-                if file_path.name in processed_files:
+                try:
+                    st = file_path.stat()
+                except FileNotFoundError:
+                    continue
+                seen_key = (file_path.name, st.st_size, st.st_mtime_ns)
+                if seen_key in processed_files:
                     continue
 
                 # Wait briefly to ensure file is fully written
@@ -433,7 +447,7 @@ def watch_incoming(
                     base_dir=base_dir,
                 )
 
-                processed_files.add(file_path.name)
+                processed_files.add(seen_key)
 
                 if report["success"]:
                     logger.info(

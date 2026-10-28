@@ -64,3 +64,18 @@ def write_tone_wav(path: Path, freq: float = 440.0, seconds: float = 0.5, rate: 
         w.setframerate(rate)
         w.writeframes(struct.pack(f"<{n}h", *samples))
     return Path(path)
+
+
+def write_phrases_with_gaps_wav(path: Path, count: int = 2, rate: int = 44100,
+                                phrase_seconds: float = 0.8, gap_seconds: float = 0.8) -> Path:
+    """`count` voice-like phrases (as write_voiced_wav) separated by digital silence."""
+    n = int(phrase_seconds * rate)
+    t = np.arange(n) / rate
+    phase = 2 * math.pi * np.cumsum(150.0 * (1.0 + 0.03 * np.sin(2 * math.pi * 3.0 * t))) / rate
+    x = sum(np.sin(k * phase) / k for k in range(1, 11)) * np.sin(math.pi * t / phrase_seconds) ** 0.5
+    x = 0.3 * x / np.max(np.abs(x))
+    gap = np.zeros(int(gap_seconds * rate))
+    parts = [gap]
+    for _ in range(count):
+        parts += [x, gap]
+    return _write(path, np.concatenate(parts), rate)
