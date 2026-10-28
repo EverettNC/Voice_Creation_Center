@@ -1,0 +1,22 @@
+# Christman Voice Creation Center — what the VCC needs to run.
+# Install:  pip install -r requirements.txt
+# (tests:   pip install -r requirements-dev.txt)
+#
+# The voice itself: the Christman Voice SDK and the sovereign synthesizer.
+# After installing, build its C library once:
+#   python <Christman-Sound checkout>/scripts/build_dsp.py
+christman-sound @ git+https://github.com/EverettNC/Christman-Sound.git@main
+
+# Intel Mac only: Christman-Sound pulls librosa -> numba -> llvmlite, and
+# llvmlite 0.44 and later publish no x86_64 macOS wheel (its source build
+# fails at CMake). These two pins are the newest that install there.
+numba<0.61 ; platform_system == "Darwin" and platform_machine == "x86_64"
+llvmlite<0.44 ; platform_system == "Darwin" and platform_machine == "x86_64"
+
+# numpy<2: Christman-Sound requires it (torch 2.2.2, the Intel Mac ceiling,
+# was built against NumPy 1.x). Used by the studio recorder and validation.
+numpy>=1.26,<2
+
+# The ingestor splits and converts audio with pydub. Any input that is not
+# already .wav also needs the ffmpeg program on the PATH.
+pydub>=0.25.1
