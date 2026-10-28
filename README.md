@@ -111,7 +111,7 @@ christman_voice_center/
 │   └── rtl_support.py           # Right-to-left language support
 │
 ├── accessibility/
-│   ├── aac_voice_bridge.py      # Symbol → voice for nonverbal clients
+│   ├── aac_voice_bridge.py      # Symbol → voice for nonverbal users
 │   ├── affect_controller.py     # Emotional tone modulation
 │   ├── speed_controller.py      # Adaptive pacing
 │   └── frequency_guardian.py   # Frequency safety filtering
@@ -176,66 +176,6 @@ here; approved takes export to the AlphaVox phrase pack
 
 ---
 
-## The Factory (vcc_factory.py) — AlphaVox's express phrases in AlphaVox's voice
-
-The factory is one local process that fills a being's express cache. Each turn
-it drains the priority queue (CRITICAL first, then HIGH, STANDARD, PRELOAD),
-including whatever the being queued since the last turn, and otherwise renders
-the next phrase of the being's preload list (`VoiceExpress.DEFAULT_PHRASES`)
-that is not cached yet. It never makes up a phrase.
-
-- The renderer is Christman-Sound's sovereign synthesizer (the C port of Codec
-  War's synthesizer, words from the Vosk lexicon), speaking in the being's own
-  measured voice profile (`christman_sound.voice_profile`). If that profile is
-  not installed, the factory refuses to start and renders nothing.
-- Every render is checked before it is registered: sample rate, mono, 16-bit,
-  duration, peak level, clipping, and how much of it is voiced. Each threshold
-  is a named value in `vcc_factory.py` with its reason beside it.
-- Rendered entries carry `source="vcc_factory"`, `engine="christman"`,
-  `voice="alphavox"`, and the checks they passed.
-- The being's own recordings outrank renders: a recorded phrase is registered
-  in place (the file is only read), and a rendered entry never replaces one.
-- The index, the rendered files and the queue are on disk; a stop or a crash
-  loses nothing.
-- No network. The factory binds no port and opens no connection.
-
-**Install (once, into a venv):**
-```bash
-uv pip install -e <fresh clone of EverettNC/Christman-Sound main>
-uv pip install -e <clone of this repo>
-```
-
-**Run it for AlphaVox:**
-```bash
-CHRISTMAN_EXPRESS_ROOT=~/claude-work/vcc-express-alphavox \
-vcc-factory --being AlphaVox \
-  --lexicon ~/models/vosk-model-en-us-0.22/graph/phones/align_lexicon.txt \
-  --recordings ~/AlphaVox/data/phrases/alphavox_verified
-```
-It keeps running until Ctrl+C or SIGTERM (it finishes the phrase in hand).
-`--once` does everything waiting, prints a JSON report and stops. Nothing
-starts it at login.
-
-**AlphaVox's side** (same `CHRISTMAN_EXPRESS_ROOT`):
-```python
-from voice_express import VoiceExpress, Priority
-express = VoiceExpress()          # or VoiceExpress(root=Path(...))
-express.load()
-express.refresh_index()           # see what the factory just added
-entry = express.get_phrase("I need help", "AlphaVox", "en-US")   # ExpressPhrase or None
-express.priority_synthesize("I need help", "AlphaVox",
-                            pack_id="alphavox_default_en_us", priority=Priority.HIGH)
-```
-
-**Tests** (real runs, nothing mocked; a test that cannot run here says NOT RUN):
-```bash
-CHRISTMAN_LEXICON_PATH=~/models/vosk-model-en-us-0.22/graph/phones/align_lexicon.txt \
-VCC_ALPHAVOX_RECORDINGS=~/AlphaVox/data/phrases/alphavox_verified \
-python -m pytest tests/ -ra
-```
-
----
-
 ## Voice Dimensions
 
 Every synthesis request controls eight dimensions:
@@ -284,7 +224,7 @@ Every synthesis request is protected by multiple layers:
 
 - **Content Validation** — harmful content blocked before synthesis
 - **Frequency Guardian** — hard floor 80Hz, hard ceiling 8000Hz
-- **Population Awareness** — each being's safety profile matches their clients
+- **Population Awareness** — each being's safety profile matches their users
 - **Full Audit Trail** — every request logged, every safety event recorded
 - **Cardinal Rule 14** — dignity always. No exceptions.
 
@@ -294,7 +234,7 @@ Every synthesis request is protected by multiple layers:
 
 | Being | Population | Voice Profile |
 |-------|-----------|---------------|
-| AlphaVox | Nonverbal / AAC clients | Warm, clear, patient |
+| AlphaVox | Nonverbal / AAC users | Warm, clear, patient |
 | AlphaWolf | Dementia care | Calm, slow, steady |
 | Inferno | PTSD / Anxiety | Grounding, low, anchoring |
 | Aegis | Child protection | Alert, clear, reassuring |
