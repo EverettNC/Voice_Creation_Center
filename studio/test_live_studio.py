@@ -1,47 +1,42 @@
 """
-Smoke test for the Phase 1 live studio.
+Tests for the live studio workflow.
 
-Proves the core workflow end to end with a REAL wav file:
-    create session -> register raw take -> validate -> approve -> export
+Proves the workflow end to end with REAL wav files:
+    create session -> register raw take -> listen + validate -> approve -> export
 
-Export targets a temp dir (NEVER the real /Users/EverettN path) and the
-express-index registration is pointed at a temp index file so this test
-never mutates the Center's real express_index.json.
+Export targets a temp dir and the express-index registration is pointed at a
+temp index file, so these tests never touch a real export folder or the
+Center's real express_index.json. No test opens a microphone or plays sound.
 
 Run directly:   python3 studio/test_live_studio.py
 Or with pytest:  pytest studio/test_live_studio.py
+
+A test that cannot run is reported as NOT RUN with its reason, never as a pass.
 """
 
 import sys
-import wave
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))
+for _p in (str(_HERE), str(_HERE.parent / "engines")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import live_studio as ls
 import voice_path_registrar
+from signals_for_tests import write_noise_wav, write_silent_wav, write_voiced_wav
 
-
-def _write_silent_wav(path: Path, seconds: float = 0.25, rate: int = 22050) -> None:
-    """Write a tiny real mono wav (stdlib only — no external deps)."""
-    n_frames = int(seconds * rate)
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)  # 16-bit
-        w.setframerate(rate)
-        w.writeframes(b"\x00\x00" * n_frames)
+SPEAKER = "studio test"
 
 
 def test_create_attach_approve_export(tmp_path):
-    raw_take = tmp_path / "raw_take.wav"
-    _write_silent_wav(raw_take)
+    raw_take = write_voiced_wav(tmp_path / "raw_take.wav")
 
-    export_dir = tmp_path / "alphavox_cycled"
+    export_dir = tmp_path / "approved_exports"
     studio = ls.LiveStudio(export_dir=export_dir)
 
     # create
-    session = studio.create_session("I love you", speaker="Everett")
+    session = studio.create_session("I love you", speaker=SPEAKER)
     assert session.state == ls.SessionState.CREATED
     assert session.exported_to is None
 
@@ -50,9 +45,10 @@ def test_create_attach_approve_export(tmp_path):
     assert session.state == ls.SessionState.TAKE_REGISTERED
     assert Path(session.raw_path) == raw_take.resolve()
 
-    # validate
+    # validate: the take is listened to, and it holds voiced sound
     studio.mark_validation(session.id, transcript="I love you")
-    assert session.validation_status == ls.ValidationStatus.PASSED
+    assert session.validation_status == ls.ValidationStatus.PASSED, session.validation_reasons
+    assert session.take_report["voiced_seconds"] > 0.5
 
     # approve
     studio.approve(session.id)
@@ -70,17 +66,62 @@ def test_create_attach_approve_export(tmp_path):
     assert raw_take.exists(), "raw take must stay where it was"
 
 
+def test_silent_take_is_refused(tmp_path):
+    """A WAV of pure silence must never validate, approve or export, whatever the transcript says."""
+    raw_take = write_silent_wav(tmp_path / "silence.wav", seconds=1.0)
+    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    session = studio.create_session("I love you", speaker=SPEAKER)
+    studio.register_raw_take(session.id, str(raw_take))
+
+    studio.mark_validation(session.id, transcript="I love you", passed=True)
+    assert session.validation_status == ls.ValidationStatus.FAILED
+    assert any("silence" in r for r in session.validation_reasons), session.validation_reasons
+    assert session.take_report["voiced_seconds"] == 0.0
+
+    try:
+        studio.approve(session.id)
+        assert False, "approve must refuse a silent take"
+    except ValueError:
+        pass
+    try:
+        studio.export_approved(session.id, register=False)
+        assert False, "export must refuse a silent take"
+    except ValueError:
+        pass
+    assert not (tmp_path / "out").exists() or not any((tmp_path / "out").iterdir())
+
+
+def test_unvoiced_noise_take_is_refused(tmp_path):
+    """Loud noise with no voice in it is refused too: loudness alone is not speech."""
+    raw_take = write_noise_wav(tmp_path / "noise.wav")
+    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    session = studio.create_session("Help is coming", speaker=SPEAKER)
+    studio.register_raw_take(session.id, str(raw_take))
+    studio.mark_validation(session.id, transcript="Help is coming")
+    assert session.validation_status == ls.ValidationStatus.FAILED
+    assert any("voiced sound" in r for r in session.validation_reasons), session.validation_reasons
+
+
+def test_too_short_take_is_refused(tmp_path):
+    raw_take = write_voiced_wav(tmp_path / "short.wav", seconds=0.2)
+    studio = ls.LiveStudio(export_dir=tmp_path / "out")
+    session = studio.create_session("Yes", speaker=SPEAKER)
+    studio.register_raw_take(session.id, str(raw_take))
+    studio.mark_validation(session.id, transcript="Yes")
+    assert session.validation_status == ls.ValidationStatus.FAILED
+    assert any("under" in r for r in session.validation_reasons), session.validation_reasons
+
+
 def test_export_registers_into_index(tmp_path, monkeypatch):
     """Export with register=True writes into the (temp) express index."""
-    raw_take = tmp_path / "raw.wav"
-    _write_silent_wav(raw_take)
+    raw_take = write_voiced_wav(tmp_path / "raw.wav")
 
     temp_index = tmp_path / "express_index.json"
     monkeypatch.setattr(voice_path_registrar, "EXPRESS_INDEX", temp_index)
     monkeypatch.setattr(voice_path_registrar, "EXPRESS_ROOT", tmp_path)
 
     studio = ls.LiveStudio(export_dir=tmp_path / "out")
-    session = studio.create_session("You are safe", speaker="Everett")
+    session = studio.create_session("You are safe", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="You are safe")
     studio.approve(session.id)
@@ -93,10 +134,9 @@ def test_export_registers_into_index(tmp_path, monkeypatch):
 
 
 def test_cannot_approve_without_passing_validation(tmp_path):
-    raw_take = tmp_path / "r.wav"
-    _write_silent_wav(raw_take)
+    raw_take = write_voiced_wav(tmp_path / "r.wav")
     studio = ls.LiveStudio(export_dir=tmp_path / "out")
-    session = studio.create_session("hi", speaker="Everett")
+    session = studio.create_session("hi", speaker=SPEAKER)
     studio.register_raw_take(session.id, str(raw_take))
     studio.mark_validation(session.id, transcript="kill yourself")  # blocked by validator
     assert session.validation_status == ls.ValidationStatus.FAILED
@@ -107,20 +147,38 @@ def test_cannot_approve_without_passing_validation(tmp_path):
         pass
 
 
-def test_mic_capture_is_honest_stub(tmp_path):
+def test_capture_without_an_input_device_refuses_and_records_nothing(tmp_path):
+    """
+    Phase 2 made capture_take real: it records through studio/recorder.py.
+    With no audio input available it must refuse loudly (RuntimeError),
+    put the session back to CREATED, and leave no take behind. The recorder's
+    audio library is taken away for this test, so no microphone can open
+    even on a machine that has one.
+    """
     studio = ls.LiveStudio(export_dir=tmp_path / "out")
-    session = studio.create_session("hello", speaker="Everett")
-    try:
-        studio.capture_take(session.id)
-        assert False, "capture_take must not fake a recording"
-    except NotImplementedError:
-        pass
+    studio._recorder._sd = None
+    session = studio.create_session("hello", speaker=SPEAKER)
+    for duration in (None, 1.0):
+        try:
+            studio.capture_take(session.id, duration_seconds=duration, countdown=False)
+            assert False, "capture_take must not fake a recording"
+        except RuntimeError as e:
+            assert "microphone" in str(e)
+        assert session.state == ls.SessionState.CREATED
+        assert session.raw_path is None
 
+
+# ── Standalone runner ────────────────────────────────────────────────────────
 
 def _run_all():
-    """Tiny runner so the file works without pytest installed."""
+    """Runs every test without pytest. A skipped test is NOT RUN, never a pass."""
     import tempfile
-    import contextlib
+
+    try:
+        import pytest
+        skip_exc = pytest.skip.Exception
+    except ImportError:  # no test here calls skip, but a pytest-less run must still load
+        skip_exc = ()
 
     class _MP:
         def __init__(self): self._saved = []
@@ -131,7 +189,7 @@ def _run_all():
             for obj, name, val in reversed(self._saved):
                 setattr(obj, name, val)
 
-    passed = 0
+    passed, failed, not_run = 0, 0, 0
     for name, fn in sorted(globals().items()):
         if not name.startswith("test_") or not callable(fn):
             continue
@@ -143,13 +201,19 @@ def _run_all():
                     fn(tmp, mp)
                 else:
                     fn(tmp)
-                print(f"PASS  {name}")
+                print(f"PASS     {name}")
                 passed += 1
+            except skip_exc as e:
+                print(f"NOT RUN  {name}: {e}")
+                not_run += 1
+            except Exception as e:
+                print(f"FAIL     {name}: {type(e).__name__}: {e}")
+                failed += 1
             finally:
                 mp.undo()
-    print(f"\n{passed} test(s) passed.")
-    return passed
+    print(f"\n{passed} passed, {failed} failed, {not_run} not run.")
+    return failed
 
 
 if __name__ == "__main__":
-    _run_all()
+    sys.exit(1 if _run_all() else 0)

@@ -49,6 +49,7 @@ for _p in (str(_CENTER_ROOT), str(_ENGINES_DIR), str(_STUDIO_DIR)):
         sys.path.insert(0, _p)
 
 import voice_validator         # engines/voice_validator.py
+import take_listener         # studio/take_listener.py — listens to the take
 import voice_path_registrar    # engines/voice_path_registrar.py
 from recorder import Recorder, RecordingStats  # studio/recorder.py  (Phase 2)
 
@@ -102,6 +103,11 @@ class StudioSession:
 
     # Phase 2 additions — recording metrics for quality review
     recording_stats:   Optional[dict] = None   # RecordingStats.to_dict()
+
+    # What listening to the take measured (take_listener.TakeReport.to_dict())
+    # and every reason validation refused it, if it did.
+    take_report:        Optional[dict] = None
+    validation_reasons: list = field(default_factory=list)
 
     id:         str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     created_at: str = field(
@@ -386,18 +392,38 @@ class LiveStudio:
         passed: Optional[bool] = None,
     ) -> StudioSession:
         """
-        Record a validation result.
-        Reuses voice_validator.validate_text on the transcript.
+        Listen to the take, check the transcript, and record the result.
+
+        The take itself is measured first (studio/take_listener.py): a take
+        that is silent, holds no voiced sound, or is too short or too long
+        for one phrase fails, whatever the transcript says. The transcript is
+        then checked with voice_validator.validate_text. `passed` is the
+        reviewer's own judgment of the words; when given, it must also be
+        True for the take to pass. The listener does not recognize words.
         """
         session = self.get_session(session_id)
         if session.raw_path is None:
             raise ValueError("Cannot validate a session with no raw take registered.")
 
         session.transcript = transcript
-        text_ok, text_err  = voice_validator.validate_text(transcript)
+        reasons: list = []
 
-        ok = bool(passed) and text_ok if passed is not None else text_ok
+        try:
+            report = take_listener.listen(session.raw_path)
+            session.take_report = report.to_dict()
+            reasons.extend(report.reasons)
+        except take_listener.TakeUnreadable as e:
+            session.take_report = None
+            reasons.append(str(e))
 
+        text_ok, text_err = voice_validator.validate_text(transcript)
+        if not text_ok:
+            reasons.append(text_err or "transcript refused by voice_validator")
+        if passed is False:
+            reasons.append("the reviewer did not pass the take")
+
+        ok = not reasons
+        session.validation_reasons = reasons
         session.validation_status = (
             ValidationStatus.PASSED if ok else ValidationStatus.FAILED
         )
@@ -406,7 +432,7 @@ class LiveStudio:
             "Session %s — validation %s%s",
             session_id,
             session.validation_status.value,
-            "" if ok else f" ({text_err or 'human-rejected'})",
+            "" if ok else f" ({'; '.join(reasons)})",
         )
         return session
 
