@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "christman-voice-creation-center"
+version = "0.1.0"
+description = "Christman Voice Creation Center: express cache, priority queue and the factory that renders a being's phrases in its own voice"
+requires-python = ">=3.10"
+authors = [
+    { name = "Everett Nathaniel Christman", email = "lumacognify@thechristmanaiproject.com" },
+]
+# Rendering needs Christman-Sound (EverettNC/Christman-Sound), installed from
+# its own clone with `pip install -e`. It is not on PyPI, so it is not listed
+# here; voice_express imports nothing from it, and vcc_factory loads it at start.
+dependencies = []
+
+[project.scripts]
+vcc-factory = "vcc_factory:main"
+
+[tool.setuptools]
+# Install with `pip install -e <clone>` (editable): vcc_factory finds
+# engines/voice_validator.py beside it in the clone.
+py-modules = ["voice_express", "vcc_factory", "voice_ingestor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
