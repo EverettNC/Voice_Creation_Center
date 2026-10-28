@@ -84,7 +84,7 @@ class VoiceCacheManager:
         logger.info("Voice cache cleared.")
 
     def stats(self) -> dict:
-        """Cache statistics for Brockston dashboard."""
+        """Cache statistics for the admin dashboard."""
         total_hits = sum(self._hit_counts.values())
         total_misses = sum(self._miss_counts.values())
         total = total_hits + total_misses

@@ -156,7 +156,7 @@ def log_safety_event(
 def get_recent_events(log_name: str, n: int = 50, base_dir: Optional[str] = None) -> list[dict]:
     """
     Read the last N events from a log file.
-    Used by the Brockston admin dashboard.
+    Used by the admin dashboard.
     """
     log_file = log_path(log_name, base_dir)
     if not log_file.exists():
